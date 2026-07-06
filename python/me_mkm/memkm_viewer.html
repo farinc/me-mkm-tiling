@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ME-MKM Viewer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],throwOnError:false})"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.4.0/dist/svg2pdf.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;height:100vh;display:flex;flex-direction:column;overflow:hidden;font-size:13px}
+
+/* header */
+#hdr{padding:9px 16px;background:#ffffff;border-bottom:1px solid #e2e8f0;flex-shrink:0;display:flex;align-items:center;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+#hdr h1{font-size:15px;font-weight:600;white-space:nowrap;color:#0f172a}
+#meta{font-size:12px;color:#64748b;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#load-btn{padding:5px 11px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:5px;color:#374151;font-size:12px;cursor:pointer;flex-shrink:0}
+#load-btn:hover{background:#e2e8f0}
+
+/* layout */
+#body{display:flex;flex:1;min-height:0}
+#cy{flex:1;min-height:0;background:#ffffff}
+
+/* sidebar */
+#sb{width:300px;background:#ffffff;border-left:1px solid #e2e8f0;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;flex-shrink:0}
+.panel{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px}
+.panel h3{font-size:11px;font-weight:600;color:#94a3b8;margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em}
+
+/* reaction network */
+.rxn-block{display:flex;align-items:stretch;gap:9px;padding:8px 0;border-bottom:1px solid #e9eef4}
+.rxn-block:last-child{border-bottom:none;padding-bottom:0}
+.rxn-pip{width:4px;border-radius:2px;flex-shrink:0;min-height:24px}
+.rxn-body{display:flex;flex-direction:column;gap:1px}
+.rxn-label{font-size:11px;font-weight:600;color:#64748b}
+.rxn-eq{font-size:14px;color:#1e293b;line-height:1.7}
+
+/* cell legend */
+.cell-row{display:flex;align-items:center;gap:7px;padding:4px 0;font-size:13px;color:#334155}
+.csw{width:14px;height:14px;border-radius:3px;flex-shrink:0;border:1px solid rgba(0,0,0,.08)}
+
+/* node detail */
+#nd{font-size:12px;line-height:2;color:#475569}
+#nd b{color:#1e293b}
+.bdg{display:inline-block;padding:1px 6px;border-radius:6px;font-size:11px;font-weight:700;margin-right:2px;color:#fff}
+.edge-line{margin:3px 0}
+
+#warn{background:#fef3c7;border:1px solid #f59e0b;border-radius:5px;padding:7px 9px;font-size:12px;color:#92400e;display:none}
+.muted{color:#94a3b8;font-size:12px;font-style:italic}
+.ctrl-row{display:flex;flex-direction:column;gap:4px;margin:7px 0}
+.ctrl-row label{font-size:11px;font-weight:600;color:#64748b}
+.ctrl-row select,.ctrl-row input{font:inherit;font-size:12px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#334155;padding:5px 7px}
+.btn-row{display:flex;gap:7px;align-items:center;margin-top:8px}
+.btn-row button{flex:1;padding:6px 8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:5px;color:#334155;font-size:12px;cursor:pointer}
+.btn-row button:hover:not(:disabled){background:#e2e8f0}
+.btn-row button:disabled{opacity:.45;cursor:not-allowed}
+#export-status{font-size:10px;color:#64748b;line-height:1.45;margin-top:7px;min-height:1.45em}
+.help{font-size:10px;color:#64748b;line-height:1.45;margin-top:6px}
+.ctrl-row input[type=range]{border:none;padding:2px 0;accent-color:#475569;width:100%;cursor:pointer}
+</style>
+</head>
+<body>
+
+<div id="hdr">
+  <h1 id="title">ME-MKM Viewer</h1>
+  <div id="meta">Load a JSON exported by export_memkm_graph.py</div>
+  <button id="load-btn">Load JSON…</button>
+  <input type="file" id="fi" accept=".json" style="display:none">
+</div>
+
+<div id="body">
+  <div id="cy"></div>
+  <div id="sb">
+
+    <div id="warn"></div>
+
+    <div class="panel">
+      <h3>Reaction network</h3>
+      <div id="rxn-panel"><span class="muted">No data loaded.</span></div>
+    </div>
+
+    <div class="panel">
+      <h3>Tile sites</h3>
+      <div id="cell-panel"><span class="muted">—</span></div>
+      <p style="font-size:10px;color:#334155;margin-top:7px;line-height:1.6">
+        Sites $0\ldots\ell{-}1$ are the canonical tile indices. The render selector only changes the visual embedding of those same indices.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h3>Tile render</h3>
+      <div class="ctrl-row">
+        <label for="shape-select">Node/tile shape</label>
+        <select id="shape-select" disabled>
+          <option value="brick-strip">Brickwork tile: 1×ℓ strip</option>
+          <option value="brick-offset">Brickwork offset patch: repeat with d shift</option>
+          <option value="square-grid">Square patch: row width d</option>
+          <option value="greek-cross">Greek cross</option>
+          <option value="hex-cluster">Hexagonal / creamcups</option>
+          <option value="exported">Use exported site_positions</option>
+        </select>
+      </div>
+      <div class="ctrl-row" id="repeat-row">
+        <label for="repeat-count">Repeated rows for brickwork patch</label>
+        <input id="repeat-count" type="number" min="1" max="6" value="3">
+      </div>
+      <div id="shape-info" class="help">Load a JSON, then choose a render.</div>
+    </div>
+
+    <div class="panel">
+      <h3>Export graph</h3>
+      <div class="ctrl-row">
+        <label for="export-scope">Exported region</label>
+        <select id="export-scope" disabled>
+          <option value="full">Full graph</option>
+          <option value="viewport">Current viewport</option>
+        </select>
+      </div>
+      <div class="ctrl-row">
+        <label for="export-bg">Background</label>
+        <select id="export-bg" disabled>
+          <option value="#f1f5f9">Viewer background</option>
+          <option value="#ffffff">White</option>
+          <option value="transparent">Transparent SVG</option>
+        </select>
+      </div>
+      <div class="btn-row">
+        <button id="export-svg-btn" disabled>Export SVG</button>
+        <button id="export-pdf-btn" disabled>Export PDF</button>
+      </div>
+      <div id="export-status">Load a JSON before exporting.</div>
+    </div>
+
+    <div class="panel">
+      <h3>Selected state</h3>
+      <div id="nd"><span class="muted">Click a node.</span></div>
+    </div>
+
+    <div class="panel">
+      <h3>Display</h3>
+      <div class="ctrl-row">
+        <label for="font-size-slider">Graph text &nbsp;<span id="font-size-val">12</span> pt</label>
+        <input type="range" id="font-size-slider" min="6" max="22" value="12" step="1">
+      </div>
+      <div class="ctrl-row" style="margin-top:6px">
+        <label for="spread-slider">Node spacing &nbsp;<span id="spread-val">1.0</span>×</label>
+        <input type="range" id="spread-slider" min="0.3" max="4.0" value="1.0" step="0.05">
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Controls</h3>
+      <div style="font-size:11px;color:#475569;line-height:1.8">
+        Scroll — zoom &nbsp;|&nbsp; Drag — pan<br>
+        Click node — inspect<br>
+        Double-click bg — fit view
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+import cytoscape from 'https://cdn.jsdelivr.net/npm/cytoscape@3.34.0/+esm';
+
+let svgExtensionReady = false;
+let svgExtensionError = null;
+try {
+  const svgModule = await import('https://cdn.jsdelivr.net/npm/cytoscape-svg@0.4.0/+esm');
+  const svgExtension = svgModule.default || svgModule;
+  cytoscape.use(svgExtension);
+  svgExtensionReady = true;
+} catch (err) {
+  svgExtensionError = err;
+  console.warn('cytoscape-svg could not be loaded; SVG/PDF export will be disabled.', err);
+}
+
+// ── state ──────────────────────────────────────────────────────────────────────
+let G = null, NM = {}, cy = null;
+let basePositions = {};   // nodeId -> {x, y} at spread=1.0 (post ps-scale)
+let cyFontSize = 12;
+let cySpread = 1.0;
+
+// ── tile icon dimensions ───────────────────────────────────────────────────────
+const CELL = 16, CGAP = 2, CPAD = 4;
+// index 0 = empty site (light grey), 1+ = adsorbates
+const SP_FILL = ['#cbd5e1','#f59e0b','#ef4444','#818cf8','#34d399','#fb923c'];
+
+function escapeXml(x) {
+  return String(x).replace(/[&<>\"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+}
+
+function clampInt(x, lo, hi, fallback) {
+  const v = Number.parseInt(x, 10);
+  return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback;
+}
+
+function shapeName(shape) {
+  return ({
+    'brick-strip': 'brickwork strip',
+    'brick-offset': 'brickwork offset patch',
+    'square-grid': 'square patch',
+    'greek-cross': 'Greek cross',
+    'hex-cluster': 'hexagonal / creamcups',
+    'exported': 'exported positions',
+  })[shape] || shape;
+}
+
+function topologyParams(meta) {
+  const lFromNode = G?.nodes?.[0]?.canonical_state?.length || 1;
+  const l = clampInt(meta?.l, 1, 500, lFromNode);
+  const d = clampInt(meta?.d, 1, Math.max(1, l), 1);
+  return { l, d };
+}
+
+function squareLayoutFromPositions(pos) {
+  const entries = Object.entries(pos).map(([i, rc]) => ({ i: Number(i), r: Number(rc[0]), c: Number(rc[1]) }))
+    .sort((a, b) => a.i - b.i);
+  const minR = Math.min(...entries.map(e => e.r)), minC = Math.min(...entries.map(e => e.c));
+  const maxR = Math.max(...entries.map(e => e.r)), maxC = Math.max(...entries.map(e => e.c));
+  const W = (maxC - minC + 1) * (CELL + CGAP) - CGAP + 2 * CPAD;
+  const H = (maxR - minR + 1) * (CELL + CGAP) - CGAP + 2 * CPAD;
+  return { W, H, cells: entries.map(e => ({ i: e.i, kind: 'square', x: CPAD + (e.c - minC) * (CELL + CGAP), y: CPAD + (e.r - minR) * (CELL + CGAP), primary: true })) };
+}
+
+function squareLayoutFromGridCoords(coords) {
+  const minR = Math.min(...coords.map(e => e.r)), minC = Math.min(...coords.map(e => e.c));
+  const maxR = Math.max(...coords.map(e => e.r)), maxC = Math.max(...coords.map(e => e.c));
+  const W = (maxC - minC + 1) * (CELL + CGAP) - CGAP + 2 * CPAD;
+  const H = (maxR - minR + 1) * (CELL + CGAP) - CGAP + 2 * CPAD;
+  return { W, H, cells: coords.map(e => ({ i: e.i, kind: 'square', x: CPAD + (e.c - minC) * (CELL + CGAP), y: CPAD + (e.r - minR) * (CELL + CGAP), primary: e.primary !== false })) };
+}
+
+function brickStripCoords(l) {
+  return Array.from({length: l}, (_, i) => ({ i, r: 0, c: i, primary: true }));
+}
+
+function brickOffsetCoords(l, d, rows) {
+  const mid = Math.floor(rows / 2);
+  const out = [];
+  for (let r = 0; r < rows; r++) {
+    const shift = (r - mid) * d;
+    for (let i = 0; i < l; i++) out.push({ i, r, c: i + shift, primary: r === mid });
+  }
+  return out;
+}
+
+function squareGridCoords(l, d) {
+  const w = Math.max(1, d);
+  return Array.from({length: l}, (_, i) => ({ i, r: Math.floor(i / w), c: i % w, primary: true }));
+}
+
+function greekCrossCoords(l) {
+  // SI l=5,d=2 equivalent Greek-cross ordering: 0 center, 1 right, 2 bottom, 3 top, 4 left.
+  const base = [
+    {i: 0, r: 1, c: 1},
+    {i: 1, r: 1, c: 2},
+    {i: 2, r: 2, c: 1},
+    {i: 3, r: 0, c: 1},
+    {i: 4, r: 1, c: 0},
+  ];
+  const coords = base.slice(0, Math.min(l, 5));
+  for (let i = 5; i < l; i++) coords.push({ i, r: 3 + Math.floor((i - 5) / 5), c: (i - 5) % 5 });
+  return coords;
+}
+
+function axialSpiral(n) {
+  const coords = [{q: 0, r: 0}];
+  const dirs = [[1,0],[0,1],[-1,1],[-1,0],[0,-1],[1,-1]];
+  for (let radius = 1; coords.length < n; radius++) {
+    let q = -radius, r = 0;
+    for (const [dq, dr] of dirs) {
+      for (let step = 0; step < radius && coords.length < n; step++) {
+        coords.push({q, r});
+        q += dq; r += dr;
+      }
+    }
+  }
+  return coords.slice(0, n);
+}
+
+function hexPoints(cx, cy, R) {
+  const pts = [];
+  for (let k = 0; k < 6; k++) {
+    const a = Math.PI / 180 * (60 * k); // flat-top hexagon
+    pts.push(`${(cx + R * Math.cos(a)).toFixed(2)},${(cy + R * Math.sin(a)).toFixed(2)}`);
+  }
+  return pts.join(' ');
+}
+
+function hexLayout(l) {
+  const R = 15, SQ3 = Math.sqrt(3);
+  const raw = axialSpiral(l).map((e, i) => ({
+    i,
+    kind: 'hex',
+    cx: 1.5 * R * e.q,
+    cy: SQ3 * R * (e.r + e.q / 2),
+    R,
+  }));
+  const minX = Math.min(...raw.map(c => c.cx - c.R));
+  const maxX = Math.max(...raw.map(c => c.cx + c.R));
+  const minY = Math.min(...raw.map(c => c.cy - SQ3 * c.R / 2));
+  const maxY = Math.max(...raw.map(c => c.cy + SQ3 * c.R / 2));
+  const W = maxX - minX + 2 * CPAD;
+  const H = maxY - minY + 2 * CPAD;
+  return { W, H, cells: raw.map(c => ({ ...c, cx: c.cx - minX + CPAD, cy: c.cy - minY + CPAD, primary: true })) };
+}
+
+function buildTileLayout(shape, sitePos, meta) {
+  const { l, d } = topologyParams(meta);
+  const rows = clampInt(document.getElementById('repeat-count')?.value, 1, 6, 3);
+  if (shape === 'exported') return squareLayoutFromPositions(sitePos);
+  if (shape === 'brick-offset') return squareLayoutFromGridCoords(brickOffsetCoords(l, d, rows));
+  if (shape === 'square-grid') return squareLayoutFromGridCoords(squareGridCoords(l, d));
+  if (shape === 'greek-cross') return squareLayoutFromGridCoords(greekCrossCoords(l));
+  if (shape === 'hex-cluster') return hexLayout(l);
+  return squareLayoutFromGridCoords(brickStripCoords(l));
+}
+
+function updateShapeInfo(shape) {
+  const info = document.getElementById('shape-info');
+  const repeat = document.getElementById('repeat-row');
+  if (!info || !G) return;
+  const { l, d } = topologyParams(G.meta);
+  if (repeat) repeat.style.display = shape === 'brick-offset' ? 'flex' : 'none';
+  const msg = {
+    'brick-strip': `Shows the fundamental brick as ${l} square sites in the canonical order.`,
+    'brick-offset': `Repeats the same ${l}-site brick over several rows and shifts each repeated row by d=${d} sites. Repeated cells are periodic copies, not extra sites.`,
+    'square-grid': `Embeds the ${l} sites as a square-lattice patch with row width d=${d}.`,
+    'greek-cross': l === 5 ? 'Uses the l=5 Greek-cross ordering: 0 center, 1 right, 2 bottom, 3 top, 4 left.' : `Places the first five sites in a Greek cross and appends the remaining ${Math.max(0, l - 5)} sites below.`,
+    'hex-cluster': `Places the ${l} sites on a compact flat-top hexagonal spiral.`,
+    'exported': 'Uses the site_positions that came directly from the JSON file.',
+  }[shape];
+  info.textContent = msg;
+}
+
+// Builds an SVG data-URL showing the canonical tile state.
+function makeTileSVG(state, layout, allSpecies) {
+  const W = layout.W, H = layout.H;
+  const bg = `<rect x="0" y="0" width="${W}" height="${H}" fill="#eef2f7" rx="3"/>`;
+  const cells = layout.cells.map(cell => {
+    const occ = state[cell.i] ?? 0;
+    const fill = SP_FILL[occ] || '#888';
+    const stroke = cell.primary === false ? '#94a3b8' : '#334155';
+    const op = cell.primary === false ? 0.72 : 1.0;
+    let s = '';
+    let tx = 0, ty = 0, fs = Math.round(CELL * 0.62);
+    if (cell.kind === 'hex') {
+      s += `<polygon points="${hexPoints(cell.cx, cell.cy, cell.R)}" fill="${fill}" stroke="${stroke}" stroke-width="1.1" opacity="${op}"/>`;
+      tx = cell.cx; ty = cell.cy + 1; fs = Math.round(cell.R * 0.72);
+    } else {
+      s += `<rect x="${cell.x}" y="${cell.y}" width="${CELL}" height="${CELL}" rx="1.5" fill="${fill}" stroke="${stroke}" stroke-width="0.8" opacity="${op}"/>`;
+      tx = cell.x + CELL / 2; ty = cell.y + CELL / 2 + 1;
+    }
+    if (occ > 0) {
+      const letter = escapeXml(((allSpecies[occ] || String(occ)).replace('*', ''))[0] || String(occ));
+      s += `<text x="${tx}" y="${ty}" text-anchor="middle" dominant-baseline="central" `
+         + `fill="white" font-size="${fs}" font-weight="bold" opacity="${op}" `
+         + `font-family="system-ui,sans-serif">${letter}</text>`;
+    }
+    return s;
+  }).join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${bg}${cells}</svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
+// ── KaTeX helpers ──────────────────────────────────────────────────────────────
+function katexHtml(tex, display = false) {
+  try { return katex.renderToString(tex, { throwOnError: false, displayMode: display }); }
+  catch(e) { return `<span style="color:#f87171">${tex}</span>`; }
+}
+
+function spToTex(name) {
+  if (name === '*') return '{*}';
+  if (name.endsWith('*')) return '\\text{' + name.slice(0, -1) + '}^{*}';
+  return '\\text{' + name + '}';
+}
+
+// Strip LaTeX commands to produce a readable plain-text edge label.
+function texToPlain(s) {
+  return (s || '')
+    .replace(/\\mathrm\{([^}]+)\}/g, '$1')
+    .replace(/\\text\{([^}]+)\}/g, '$1')
+    .replace(/_\{([^}]+)\}/g, '_$1')
+    .replace(/\^\{([^}]+)\}/g, '^$1')
+    .replace(/[{}]/g, '')
+    .replace(/\\/g, '');
+}
+
+// Edge symbol convention:
+//   rate_symbol       = plain/export-safe graph label, e.g. "k1" or "k₁"
+//   rate_symbol_latex = optional KaTeX label for HTML/sidebar use, e.g. "k_{1}"
+// Older JSON that only has rate_symbol as LaTeX still works via texToPlain fallback.
+function edgeRatePlain(e) {
+  const raw = e?.rate_symbol ?? e?.symbol ?? e?.rate_symbol_latex ?? '';
+  return String(raw);
+}
+
+function edgeRateLatex(e) {
+  return e?.rate_symbol_latex ?? e?.rate_symbol ?? e?.symbol ?? '';
+}
+
+function edgePairMultiplier(e) {
+  const np = e?.n_pairs;
+  if (typeof np === 'number') return Math.round(np) === np ? String(Math.round(np)) : np.toFixed(2);
+  const m = String(e?.label || '').match(/×\s*([0-9.]+)/);
+  return m ? m[1] : '';
+}
+
+function edgeGraphLabel(e) {
+  const ni = edgePairMultiplier(e);
+  const rate = edgeRatePlain(e);
+  return '×' + ni + (rate ? ' ' + texToPlain(rate) : '');
+}
+
+function edgeSidebarLabel(e) {
+  const ni = edgePairMultiplier(e);
+  const tex = edgeRateLatex(e);
+  if (tex) return katexHtml('\\times ' + ni + '\\,' + tex);
+  return escapeXml('×' + ni);
+}
+
+// ── position scaling ───────────────────────────────────────────────────────────
+// Ensure nodes in the preset layout don't overlap even for large l.
+function minGap(vals) {
+  const u = [...new Set(vals)].sort((a, b) => a - b);
+  if (u.length < 2) return Infinity;
+  let m = Infinity;
+  for (let i = 1; i < u.length; i++) m = Math.min(m, u[i] - u[i - 1]);
+  return m;
+}
+
+// ── export helpers ────────────────────────────────────────────────────────────
+function setExportEnabled(enabled) {
+  const canExport = Boolean(enabled && svgExtensionReady && cy && typeof cy.svg === 'function');
+  ['export-scope', 'export-bg'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
+  });
+  ['export-svg-btn', 'export-pdf-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !canExport;
+  });
+  updateExportStatus();
+}
+
+function updateExportStatus(msg = null) {
+  const st = document.getElementById('export-status');
+  if (!st) return;
+  if (msg) { st.textContent = msg; return; }
+  if (!G) { st.textContent = 'Load a JSON before exporting.'; return; }
+  if (!svgExtensionReady || !cy || typeof cy.svg !== 'function') {
+    st.textContent = 'SVG export library did not load. Check network access to jsDelivr.';
+    return;
+  }
+  st.textContent = 'Exports use cytoscape-svg; PDF is generated by converting the SVG with svg2pdf.js/jsPDF.';
+}
+
+function downloadTextFile(text, filename, mime) {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function exportFilename(ext) {
+  const title = (G?.meta?.title || 'memkm_graph')
+    .replace(/<[^>]*>/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'memkm_graph';
+  return `${title}.${ext}`;
+}
+
+function getExportOptions() {
+  const scope = document.getElementById('export-scope')?.value || 'full';
+  const bgChoice = document.getElementById('export-bg')?.value || '#f1f5f9';
+  const opts = {
+    full: scope === 'full',
+    scale: 1,
+  };
+  if (bgChoice !== 'transparent') opts.bg = bgChoice;
+  return opts;
+}
+
+function makeGraphSVG() {
+  if (!cy) throw new Error('No graph is loaded.');
+  if (!svgExtensionReady || typeof cy.svg !== 'function') {
+    throw new Error('cytoscape-svg is not available.');
+  }
+  return cy.svg(getExportOptions());
+}
+
+function parseSvgSize(svgText) {
+  const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+  const svg = doc.documentElement;
+  if (!svg || svg.nodeName.toLowerCase() !== 'svg') throw new Error('Failed to parse exported SVG.');
+  const vb = (svg.getAttribute('viewBox') || '').trim().split(/[ ,]+/).map(Number);
+  let w = Number.parseFloat(svg.getAttribute('width'));
+  let h = Number.parseFloat(svg.getAttribute('height'));
+  if ((!Number.isFinite(w) || !Number.isFinite(h)) && vb.length === 4) {
+    w = vb[2]; h = vb[3];
+  }
+  if (!Number.isFinite(w) || w <= 0) w = 800;
+  if (!Number.isFinite(h) || h <= 0) h = 600;
+  return { doc, svg, w, h };
+}
+
+function exportSvg() {
+  try {
+    const svgText = makeGraphSVG();
+    downloadTextFile(svgText, exportFilename('svg'), 'image/svg+xml;charset=utf-8');
+    updateExportStatus('SVG exported.');
+  } catch (err) {
+    console.error(err);
+    updateExportStatus(`SVG export failed: ${err.message}`);
+  }
+}
+
+async function exportPdf() {
+  try {
+    const svgText = makeGraphSVG();
+    const { svg, w, h } = parseSvgSize(svgText);
+    const JsPDF = window.jspdf?.jsPDF;
+    if (!JsPDF) throw new Error('jsPDF did not load.');
+    const pdf = new JsPDF({
+      orientation: w >= h ? 'l' : 'p',
+      unit: 'pt',
+      format: [w, h],
+      compress: true,
+    });
+    if (typeof window.svg2pdf === 'function') {
+      await window.svg2pdf(svg, pdf, { x: 0, y: 0, width: w, height: h });
+    } else if (typeof pdf.svg === 'function') {
+      await pdf.svg(svg, { x: 0, y: 0, width: w, height: h });
+    } else {
+      throw new Error('svg2pdf.js did not load.');
+    }
+    pdf.save(exportFilename('pdf'));
+    updateExportStatus('PDF exported.');
+  } catch (err) {
+    console.error(err);
+    updateExportStatus(`PDF export failed: ${err.message}`);
+  }
+}
+
+// ── load ──────────────────────────────────────────────────────────────────────
+function load(data) {
+  G = data;
+  NM = {};
+  G.nodes.forEach(n => NM[n.id] = n);
+
+  const m = G.meta;
+  const allSp = m.all_species || ['*', ...(m.species_names || [])];
+
+  document.getElementById('title').textContent = m.title || `l=${m.l}, d=${m.d}`;
+  document.getElementById('meta').textContent =
+    `${m.n_classes} states · ${G.edges.length} transitions · ${m.n_states} microstates · ${shapeName(document.getElementById('shape-select')?.value || 'brick-strip')}` +
+    (m.uniform ? '' : ' · ⚠ non-uniform');
+
+  const warn = document.getElementById('warn');
+  warn.style.display = m.uniform ? 'none' : 'block';
+  warn.textContent = '⚠ Coverage classes are not uniform for this tile — multipliers are averages.';
+
+  // ── Reaction network panel ─────────────────────────────────────────────────
+  document.getElementById('rxn-panel').innerHTML = (G.display_reactions || []).map(r =>
+    `<div class="rxn-block">
+      <div class="rxn-pip" style="background:${r.color}"></div>
+      <div class="rxn-body">
+        <span class="rxn-label">${r.name}</span>
+        <span class="rxn-eq">${katexHtml(r.equation)}</span>
+      </div>
+    </div>`
+  ).join('');
+
+  // ── Cell legend ────────────────────────────────────────────────────────────
+  document.getElementById('cell-panel').innerHTML = allSp.map((name, i) =>
+    `<div class="cell-row">
+      <span class="csw" style="background:${SP_FILL[i]}"></span>
+      <span>${katexHtml(spToTex(name))}</span>
+    </div>`
+  ).join('');
+
+  document.getElementById('nd').innerHTML = '<span class="muted">Click a node.</span>';
+
+  const shapeSel = document.getElementById('shape-select');
+  if (shapeSel) shapeSel.disabled = false;
+  setExportEnabled(true);
+  const currentShape = shapeSel?.value || 'brick-strip';
+  updateShapeInfo(currentShape);
+
+  // ── Build Cytoscape elements ───────────────────────────────────────────────
+  const tileLayout = buildTileLayout(currentShape, G.site_positions, m);
+  const nodeW = tileLayout.W, nodeH = tileLayout.H;
+
+  // Scale positions so nodes don't overlap, using a tighter base gap than
+  // before so the default view isn't excessively spread. The spread slider
+  // multiplies on top of this for user adjustment.
+  const gx = minGap(G.nodes.map(n => n.x));
+  const gy = minGap(G.nodes.map(n => n.y));
+  const sx = isFinite(gx) && gx < nodeW + 6 ? (nodeW + 6) / gx : 1.0;
+  const sy = isFinite(gy) && gy < nodeH + 6 ? (nodeH + 6) / gy : 1.0;
+  const ps = Math.max(1.0, sx, sy);
+  cySpread = parseFloat(document.getElementById('spread-slider')?.value || '1.0');
+
+  const elements = [];
+
+  basePositions = {};
+  G.nodes.forEach(n => {
+    basePositions[n.id] = { x: n.x * ps, y: n.y * ps };
+    elements.push({
+      data: {
+        id: n.id,
+        svgUrl: makeTileSVG(n.canonical_state, tileLayout, allSp),
+        borderColor: '#1e293b',
+        label: 'Θ(' + n.counts.join(',') + ')',
+      },
+      position: { x: n.x * ps * cySpread, y: n.y * ps * cySpread },
+    });
+  });
+
+  G.edges.forEach(e => {
+    const np = e.n_pairs;
+    const ni = Math.round(np) === np ? Math.round(np) : np.toFixed(2);
+    elements.push({
+      data: {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        // Native Cytoscape labels stay plain/export-safe.
+        // Optional e.rate_symbol_latex is used only for KaTeX-rendered sidebar math.
+        label: edgeGraphLabel(e),
+        color: e.color,
+      },
+    });
+  });
+
+  if (cy) cy.destroy();
+
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements,
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'shape':            'roundrectangle',
+          'background-image': 'data(svgUrl)',
+          'background-fit':   'contain',
+          'background-color': '#ffffff',
+          'border-width':     1.5,
+          'border-color':     'data(borderColor)',
+          'width':            nodeW,
+          'height':           nodeH,
+          'label':            'data(label)',
+          'text-valign':      'bottom',
+          'text-halign':      'center',
+          'text-margin-y':    5,
+          'font-size':        cyFontSize,
+          'color':            '#475569',
+          'font-family':      'system-ui, sans-serif',
+          'min-zoomed-font-size': 6,
+        },
+      },
+      {
+        selector: 'node:selected',
+        style: {
+          'border-color': '#0f172a',
+          'border-width':  2.5,
+          'color':         '#0f172a',
+          'font-weight':   'bold',
+        },
+      },
+      {
+        selector: 'edge',
+        style: {
+          'label':               'data(label)',
+          'curve-style':         'bezier',
+          'target-arrow-shape':  'triangle',
+          'target-arrow-color':  'data(color)',
+          'line-color':          'data(color)',
+          'arrow-scale':         1.2,
+          'width':               1.5,
+          'font-size':           Math.max(6, cyFontSize - 1),
+          'color':               'data(color)',
+          'text-background-color':   '#ffffff',
+          'text-background-opacity': 0.9,
+          'text-background-padding': '2px',
+          'text-rotation':       'autorotate',
+          'min-zoomed-font-size': 6,
+        },
+      },
+      {
+        selector: 'edge:selected',
+        style: { 'width': 2.5 },
+      },
+    ],
+    layout: { name: 'preset' },
+    userZoomingEnabled:  true,
+    userPanningEnabled:  true,
+    boxSelectionEnabled: false,
+    minZoom: 0.02,
+    maxZoom: 12,
+  });
+
+  cy.on('tap', 'node', evt => {
+    const n = NM[evt.target.id()];
+    if (n) showNode(n);
+  });
+
+  // Deselect / clear panel when tapping the background.
+  cy.on('tap', evt => {
+    if (evt.target === cy)
+      document.getElementById('nd').innerHTML = '<span class="muted">Click a node.</span>';
+  });
+
+  // Double-click background → fit.
+  cy.on('dbltap', evt => {
+    if (evt.target === cy) cy.fit(undefined, 50);
+  });
+
+  cy.fit(undefined, 50);
+  setExportEnabled(true);
+}
+
+// ── node detail sidebar ────────────────────────────────────────────────────────
+function showNode(n) {
+  const nd   = document.getElementById('nd');
+  const allSp = G.meta.all_species || ['*', ...(G.meta.species_names || [])];
+
+  const ctsHtml = n.counts.map((c, i) =>
+    katexHtml('n(' + spToTex(allSp[i + 1]) + ')=' + c)
+  ).join(' &ensp; ');
+
+  const pairsHtml = Object.entries(n.rxn_pairs || {}).map(([k, v]) => {
+    const [rname, dir] = k.split(':');
+    const rxn = (G.display_reactions || []).find(r => r.name === rname) || { color: '#666' };
+    const ni  = typeof v === 'number' && v !== Math.round(v) ? v.toFixed(2) : v;
+    return `<span class="bdg" style="background:${rxn.color};color:#fff">${rname} ${dir}</span> ${ni}<br>`;
+  }).join('');
+
+  const out = G.edges.filter(e => e.source === n.id).map(e => {
+    const t = NM[e.target];
+    return `<div class="edge-line">
+      <span class="bdg" style="background:${e.color};color:#fff">${e.rxn_name}</span>
+      ${edgeSidebarLabel(e)} &rarr; ${katexHtml('\\Theta(' + t.counts.join(',') + ')')}
+    </div>`;
+  }).join('');
+
+  const inn = G.edges.filter(e => e.target === n.id).map(e => {
+    const s = NM[e.source];
+    return `<div class="edge-line">
+      ${katexHtml('\\Theta(' + s.counts.join(',') + ')')}
+      <span class="bdg" style="background:${e.color};color:#fff">${e.rxn_name}</span> ${edgeSidebarLabel(e)}
+    </div>`;
+  }).join('');
+
+  nd.innerHTML = `
+    <b>${katexHtml('\\Theta(' + n.counts.join(',') + ')')}</b><br>
+    ${ctsHtml}<br>
+    <b>Degeneracy</b> $= ${n.degeneracy}$<br>
+    ${n.is_absorbing ? '<span style="color:#f87171;font-size:11px">⚠ Absorbing — no outgoing reactions</span><br>' : ''}
+    <br><b>Reactive pairs:</b><br>${pairsHtml}
+    <br><b>Out:</b><br>${out || '<span class="muted">—</span>'}
+    <br><b>In:</b><br>${inn  || '<span class="muted">—</span>'}
+  `;
+
+  if (typeof renderMathInElement !== 'undefined') {
+    renderMathInElement(nd, {
+      delimiters: [{ left: '$$', right: '$$', display: true },
+                   { left: '$',  right: '$',  display: false }],
+      throwOnError: false,
+    });
+  }
+}
+
+// ── file input ─────────────────────────────────────────────────────────────────
+document.getElementById('load-btn').addEventListener('click', () => {
+  document.getElementById('fi').click();
+});
+
+document.getElementById('fi').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try { load(JSON.parse(ev.target.result)); }
+    catch(err) { alert('JSON parse error: ' + err); }
+  };
+  reader.readAsText(f);
+  e.target.value = '';
+});
+
+
+const shapeSelect = document.getElementById('shape-select');
+if (shapeSelect) {
+  shapeSelect.addEventListener('change', () => { if (G) load(G); });
+}
+const repeatCount = document.getElementById('repeat-count');
+if (repeatCount) {
+  repeatCount.addEventListener('change', () => { if (G) load(G); });
+}
+
+const exportSvgBtn = document.getElementById('export-svg-btn');
+if (exportSvgBtn) exportSvgBtn.addEventListener('click', exportSvg);
+const exportPdfBtn = document.getElementById('export-pdf-btn');
+if (exportPdfBtn) exportPdfBtn.addEventListener('click', exportPdf);
+['export-scope', 'export-bg'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', () => updateExportStatus());
+});
+
+setExportEnabled(false);
+
+// Font-size slider: live-updates node and edge label sizes without reload.
+const fontSlider = document.getElementById('font-size-slider');
+const fontVal    = document.getElementById('font-size-val');
+if (fontSlider) {
+  fontSlider.addEventListener('input', () => {
+    cyFontSize = parseInt(fontSlider.value, 10);
+    if (fontVal) fontVal.textContent = cyFontSize;
+    if (cy) {
+      cy.$('node').style('font-size', cyFontSize + 'px');
+      cy.$('edge').style('font-size', Math.max(6, cyFontSize - 1) + 'px');
+    }
+  });
+}
+
+// Spread slider: rescales node positions around their centroid so the graph
+// expands/contracts without drifting off-screen, then re-fits.
+const spreadSlider = document.getElementById('spread-slider');
+const spreadVal    = document.getElementById('spread-val');
+if (spreadSlider) {
+  spreadSlider.addEventListener('input', () => {
+    const newSpread = parseFloat(spreadSlider.value);
+    if (spreadVal) spreadVal.textContent = newSpread.toFixed(2);
+    if (!cy || Object.keys(basePositions).length === 0) return;
+    cy.nodes().forEach(node => {
+      const base = basePositions[node.id()];
+      if (base) node.position({ x: base.x * newSpread, y: base.y * newSpread });
+    });
+    cy.fit(undefined, 40);
+    cySpread = newSpread;
+  });
+}
+
+// Keep Cytoscape aware of container resizes.
+window.addEventListener('resize', () => { if (cy) cy.resize(); });
+</script>
+</body>
+</html>

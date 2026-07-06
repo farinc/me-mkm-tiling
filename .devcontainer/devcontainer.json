@@ -1,0 +1,22 @@
+{
+  "name": "me-mkm-tiling",
+  "build": { "dockerfile": "Dockerfile" },
+  "postCreateCommand": "uv sync --extra dev && uv run maturin develop --release",
+  "remoteEnv": {
+    "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropics.claude-code",
+        "rust-lang.rust-analyzer",
+        "dustypomerleau.rust-syntax",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml",
+        "ms-toolsai.jupyter"
+      ]
+    }
+  }
+}

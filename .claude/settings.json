@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import PyPDF2\")",
+      "Bash(python3 -c \"import fitz\")",
+      "Bash(pip show *)",
+      "WebSearch",
+      "Bash(pdftotext \"Adams et al. - 2025 - Multisite Microkinetic Models in Catalysis Automatic Formulation and Direct Solutions of the Master.pdf\" adams2025.txt)",
+      "Bash(pdftotext \"Ge et al. - 2023 - Microkinetic Models with Interacting Adsorbates and Langmuir–Hinshelwood Steps Solving the Master E.pdf\" ge2023.txt)"
+    ]
+  }
+}

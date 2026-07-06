@@ -1,0 +1,12 @@
+[package]
+name = "me-mkm-tiling"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "_me_mkm"
+crate-type = ["cdylib"]
+
+[dependencies]
+numpy = "0.28.0"
+pyo3 = "0.28.2"
