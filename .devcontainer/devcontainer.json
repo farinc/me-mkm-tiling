@@ -1,9 +1,9 @@
 {
   "name": "me-mkm-tiling",
   "build": { "dockerfile": "Dockerfile" },
-  "postCreateCommand": "uv sync --extra dev && uv run maturin develop --release",
+  "postCreateCommand": "uv sync && uv run maturin develop --release && nbstripout --install",
   "remoteEnv": {
-    "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
+    "PATH": "/home/vscode/.cargo/bin:/home/vscode/.local/bin:${containerEnv:PATH}"
   },
   "customizations": {
     "vscode": {

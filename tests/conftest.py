@@ -8,15 +8,11 @@ Rust code, not a stale compiled .so left over from the last manual
 
 import subprocess
 import sys
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def pytest_configure(config):
     subprocess.run(
-        ["maturin", "develop", "--release"],
-        cwd=REPO_ROOT,
+        [sys.executable, "-m", "maturin", "develop", "--release"],
         check=True,
         stdout=sys.stdout,
         stderr=sys.stderr,

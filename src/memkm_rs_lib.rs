@@ -525,23 +525,37 @@ impl MEMKMBuilder {
                     // ── 2nd order reaction ─────────────────────────────────────────
                     2 => {
                         for &(si, sj) in &self.tile.neighbor_pairs {
+                            // For a symmetric reaction (pattern_in[0] ==
+                            // pattern_in[1]) with a symmetric product, both
+                            // orderings of this bond match the same physical
+                            // event and land on the same to_idx -- firing
+                            // both would double-count a single elementary
+                            // event. fired_to dedups against that. For
+                            // heterogeneous pattern_in, at most one ordering
+                            // ever matches, so this is a no-op there; for a
+                            // symmetric input with an asymmetric product
+                            // (disproportionation), the two orderings land on
+                            // different to_idx and both are genuinely kept.
+                            let mut fired_to: Option<usize> = None;
                             for (s0, s1) in [(si, sj), (sj, si)] {
                                 if state[s0] == rxn.pattern_in[0] && state[s1] == rxn.pattern_in[1] {
+                                    let mut ns = state.clone();
+                                    ns[s0] = rxn.pattern_out[0];
+                                    ns[s1] = rxn.pattern_out[1];
+                                    let to_idx = encode(&ns, self.tile.base);
+                                    if to_idx == from_idx || fired_to == Some(to_idx) {
+                                        continue;
+                                    }
+                                    fired_to = Some(to_idx);
                                     // Correction: non-reacting neighbors of both
                                     // reacting sites, derived from pattern_in.
                                     let corr = im.rate_correction(
                                         &state, &[s0, s1], &self.tile.neighbors);
                                     let rate = rxn.rate * corr;
-                                    let mut ns = state.clone();
-                                    ns[s0] = rxn.pattern_out[0];
-                                    ns[s1] = rxn.pattern_out[1];
-                                    let to_idx = encode(&ns, self.tile.base);
-                                    if to_idx != from_idx {
-                                        rows.push(to_idx as i32);
-                                        cols.push(from_idx as i32);
-                                        vals.push(rate);
-                                        diag[from_idx] -= rate;
-                                    }
+                                    rows.push(to_idx as i32);
+                                    cols.push(from_idx as i32);
+                                    vals.push(rate);
+                                    diag[from_idx] -= rate;
                                 }
                             }
                         }
@@ -620,20 +634,26 @@ impl MEMKMBuilder {
                     }
                     2 => {
                         for &(si, sj) in &self.tile.neighbor_pairs {
+                            // See compute_offdiag's 2nd-order branch for why
+                            // this dedup is needed (symmetric reactions would
+                            // otherwise double-fire the same bond).
+                            let mut fired_to: Option<usize> = None;
                             for (s0, s1) in [(si, sj), (sj, si)] {
                                 if state[s0] == rxn.pattern_in[0] && state[s1] == rxn.pattern_in[1] {
-                                    let corr = im.rate_correction(
-                                        &state, &[s0, s1], &self.tile.neighbors);
                                     let mut ns = state.clone();
                                     ns[s0] = rxn.pattern_out[0];
                                     ns[s1] = rxn.pattern_out[1];
                                     let to_idx = encode(&ns, self.tile.base);
-                                    if to_idx != from_idx {
-                                        rows[ri].push(to_idx as i32);
-                                        cols[ri].push(from_idx as i32);
-                                        vals[ri].push(corr);
-                                        diag[ri][from_idx] -= corr;
+                                    if to_idx == from_idx || fired_to == Some(to_idx) {
+                                        continue;
                                     }
+                                    fired_to = Some(to_idx);
+                                    let corr = im.rate_correction(
+                                        &state, &[s0, s1], &self.tile.neighbors);
+                                    rows[ri].push(to_idx as i32);
+                                    cols[ri].push(from_idx as i32);
+                                    vals[ri].push(corr);
+                                    diag[ri][from_idx] -= corr;
                                 }
                             }
                         }
@@ -678,7 +698,7 @@ impl MEMKMBuilder {
                 let im = rxn.effective_interaction(&self.interaction);
 
                 match rxn.pattern_in.len() {
-                    // Same site-matching as compute_w_components_coo (order-1
+                    // This is the site-matching as compute_w_components_coo (order-1
                     // reaction: single reacting site), but here we need both
                     // corr and delta_e, so call rate_correction_and_delta_e
                     // instead of rate_correction. dcorr = -delta_e * corr is
@@ -706,24 +726,29 @@ impl MEMKMBuilder {
                         }
                     }
                     // Order-2 reaction (reacting pair): identical structure,
-                    // checked over both orderings of each neighbor pair.
+                    // over both orderings of each neighbor pair, with
+                    // the same dedup as compute_offdiag's 2nd-order branch
+                    // (symmetric reactions would otherwise double-fire).
                     2 => {
                         for &(si, sj) in &self.tile.neighbor_pairs {
+                            let mut fired_to: Option<usize> = None;
                             for (s0, s1) in [(si, sj), (sj, si)] {
                                 if state[s0] == rxn.pattern_in[0] && state[s1] == rxn.pattern_in[1] {
-                                    let (corr, delta_e) = im.rate_correction_and_delta_e(
-                                        &state, &[s0, s1], &self.tile.neighbors);
-                                    let dcorr = -delta_e * corr;
                                     let mut ns = state.clone();
                                     ns[s0] = rxn.pattern_out[0];
                                     ns[s1] = rxn.pattern_out[1];
                                     let to_idx = encode(&ns, self.tile.base);
-                                    if to_idx != from_idx {
-                                        rows[ri].push(to_idx as i32);
-                                        cols[ri].push(from_idx as i32);
-                                        vals[ri].push(dcorr);
-                                        diag[ri][from_idx] -= dcorr;
+                                    if to_idx == from_idx || fired_to == Some(to_idx) {
+                                        continue;
                                     }
+                                    fired_to = Some(to_idx);
+                                    let (corr, delta_e) = im.rate_correction_and_delta_e(
+                                        &state, &[s0, s1], &self.tile.neighbors);
+                                    let dcorr = -delta_e * corr;
+                                    rows[ri].push(to_idx as i32);
+                                    cols[ri].push(from_idx as i32);
+                                    vals[ri].push(dcorr);
+                                    diag[ri][from_idx] -= dcorr;
                                 }
                             }
                         }

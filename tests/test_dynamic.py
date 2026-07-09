@@ -312,8 +312,7 @@ def test_dynamic_w_vs_kmc():
 # 2. Strong repulsion: checkerboard order defeats mean-field
 # ===========================================================================
 #
-# Adams et al. 2025 (the source of this l=8, d=3 "fish-scale" tile) found
-# that eps_AA = 3.0 kBT *repulsive* drives kMC into a checkerboard
+# Adams et al. 2025  found that eps_AA = 3.0 kBT *repulsive* drives kMC into a checkerboard
 # superlattice, that the (l=8, d=3) tile is the smallest brickwork tile that
 # can represent that pattern, and that a mean-field model cannot capture it.
 # In our sign convention (rate_correction = exp(-eps*n_occ_neighbors)),

@@ -183,15 +183,13 @@ def build_coverage_groups(l, n_ads):
 
 
 def count_reactive_pairs(state, pattern_in, pairs):
+    if len(pattern_in) == 1:
+        return sum(1 for site in state if site == pattern_in[0])
     c = 0
     for si, sj in pairs:
         for s0, s1 in [(si, sj), (sj, si)]:
-            if len(pattern_in) == 1:
-                if state[s0] == pattern_in[0]:
-                    c += 1
-            else:
-                if state[s0] == pattern_in[0] and state[s1] == pattern_in[1]:
-                    c += 1
+            if state[s0] == pattern_in[0] and state[s1] == pattern_in[1]:
+                c += 1
     return c
 
 
