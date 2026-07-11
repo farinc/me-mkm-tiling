@@ -406,14 +406,14 @@ def coverage_ic(builder: MEMKMBuilder, theta: dict, species_names: list = None) 
     without imposing any spatial correlation (checkerboard, clusters, etc.).
 
     theta : dict of species_name -> coverage, e.g. {"A": 0.3}.
-        Absent species default to 0. The empty-site fraction is inferred as
+        Absent species default to 0. Species 0's fraction is inferred as
         1 - sum(theta.values()) and must be >= 0.
-    species_names : same list passed to coverages() — full list including the
-        empty site at index 0, e.g. ["empty", "A"].
+    species_names : optional override of the species list; defaults to
+        builder.species_names (index 0 first).
     """
-    base = builder.n_ads + 1
+    base = builder.n_species
     l    = builder.l
-    names = species_names or [str(i) for i in range(base)]
+    names = species_names or list(builder.species_names)
     name_to_code = {name: i for i, name in enumerate(names)}
 
     p = np.zeros(base)
@@ -421,7 +421,7 @@ def coverage_ic(builder: MEMKMBuilder, theta: dict, species_names: list = None) 
         code = name_to_code.get(name)
         if code is not None:
             p[code] = float(cov)
-    p[0] = max(0.0, 1.0 - p[1:].sum())  # empty-site fraction is the remainder
+    p[0] = max(0.0, 1.0 - p[1:].sum())  # species 0's fraction is the remainder
 
     Theta0 = np.zeros(builder.n_states)
     for s in range(builder.n_states):
@@ -447,10 +447,10 @@ def coverages(builder: MEMKMBuilder, Theta, species_names: list = None) -> dict:
         directly computes the coverage derivative dtheta/dx (paper eq. 5) --
         no separate code path needed.
     species_names : list of str, optional
-        Full species list including the empty site at index 0.
+        Species list to key the result by; defaults to builder.species_names.
     """
-    base = builder.n_ads + 1
-    names = species_names or [str(i) for i in range(base)]
+    base = builder.n_species
+    names = species_names or list(builder.species_names)
     Theta = np.asarray(Theta)
     shape = (base,) if Theta.ndim == 1 else (base, Theta.shape[1])
     thetas = np.zeros(shape)

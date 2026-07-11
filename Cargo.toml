@@ -5,8 +5,19 @@ edition = "2024"
 
 [lib]
 name = "_me_mkm"
-crate-type = ["cdylib"]
+# rlib so the stub_gen binary can link against the crate; cdylib is the Python
+# extension module maturin builds.
+crate-type = ["cdylib", "rlib"]
+
+# Generates python/me_mkm/_me_mkm.pyi from the #[gen_stub_*] annotations.
+# Run with `cargo run --bin stub_gen` (never with the pyo3/extension-module
+# feature, which is only for the cdylib maturin builds).
+[[bin]]
+name = "stub_gen"
+doc = false
 
 [dependencies]
 numpy = "0.28.0"
 pyo3 = "0.28.2"
+pyo3-stub-gen = "0.23.0"
+env_logger = "0.11"

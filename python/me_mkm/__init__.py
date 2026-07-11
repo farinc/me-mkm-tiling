@@ -2,9 +2,15 @@ from me_mkm._me_mkm import (
     InteractionModel,
     MEMKMBuilder,
     Reaction,
-    Topology,
+    TileSettings,
     decode_state,
     encode_state,
+    state_counts,
+)
+from me_mkm.coverage import (
+    coverage_classes,
+    microstate_coverage,
+    microstate_coverage_query,
 )
 from me_mkm.export_graph import build_graph
 from me_mkm.tile import (

@@ -12,7 +12,7 @@ from me_mkm import (
     InteractionModel,
     MEMKMBuilder,
     Reaction,
-    Topology,
+    TileSettings,
     build_W,
     coverages,
     decode_state,
@@ -31,9 +31,9 @@ def steady_state(W):
 
 
 TILES = {
-    "greek_cross": (Topology.square(d=2), 5),
-    "creamcups": (Topology.hex(d=2), 7),
-    "fish_scale": (Topology.square(d=3), 8),
+    "greek_cross": TileSettings.square(sites=5, d=2),
+    "creamcups": TileSettings.hex(d=2),  # 7-site K_7
+    "fish_scale": TileSettings.square(sites=8, d=3),
 }
 
 EXPECTED_N_PAIRS = {
@@ -51,12 +51,13 @@ EXPECTED_N_STATES = {
 
 def simple_builder(tile_name, k_ads=1.0, k_des=1.0, interaction=None):
     """Single-adsorbate Langmuir builder"""
-    topo, l = TILES[tile_name]
     reactions = [
         Reaction([0], [1], rate=k_ads, name="ads"),
         Reaction([1], [0], rate=k_des, name="des"),
     ]
-    kwargs = dict(l=l, topology=topo, reactions=reactions)
+    kwargs = dict(
+        tile_settings=TILES[tile_name], reactions=reactions, species_names=["*", "A"]
+    )
     if interaction is not None:
         kwargs["interaction"] = interaction
     return MEMKMBuilder(**kwargs)
@@ -88,21 +89,17 @@ class TestGeometry:
 
     @pytest.mark.parametrize("tile_name", TILES)
     def test_l(self, tile_name):
-        topo, l = TILES[tile_name]
         builder = simple_builder(tile_name)
-        assert builder.l == l
+        assert builder.l == TILES[tile_name].l()
 
     def test_greek_cross_topology_deltas(self):
-        topo = Topology.square(d=2)
-        assert sorted(topo.deltas) == sorted([1, 2])
+        assert sorted(TileSettings.square(sites=5, d=2).deltas) == sorted([1, 2])
 
     def test_creamcups_topology_deltas(self):
-        topo = Topology.hex(d=2)
-        assert sorted(topo.deltas) == sorted([1, 2, 3])
+        assert sorted(TileSettings.hex(d=2).deltas) == sorted([1, 2, 3])
 
     def test_fish_scale_topology_deltas(self):
-        topo = Topology.square(d=3)
-        assert sorted(topo.deltas) == sorted([1, 3])
+        assert sorted(TileSettings.square(sites=8, d=3).deltas) == sorted([1, 3])
 
 
 # ===========================================================================
@@ -130,7 +127,7 @@ class TestLangmuir:
     def test_langmuir_coverage(self, tile_name, k_ads, k_des):
         builder = simple_builder(tile_name, k_ads=k_ads, k_des=k_des)
         Theta_ss = run_ss(builder)
-        theta = coverages(builder, Theta_ss, species_names=["empty", "A"])
+        theta = coverages(builder, Theta_ss)
         expected = k_ads / (k_ads + k_des)
         assert abs(theta["A"] - expected) < 1e-10, (
             f"{tile_name} k_ads={k_ads} k_des={k_des}: "
@@ -147,12 +144,12 @@ class TestSteadyStateDistribution:
     @pytest.mark.parametrize("tile_name", TILES)
     @pytest.mark.parametrize("r", [0.5, 1.0, 2.0])
     def test_equal_weight_same_occupation(self, tile_name, r):
-        topo, l = TILES[tile_name]
+        l = TILES[tile_name].l()
         builder = simple_builder(tile_name, k_ads=r, k_des=1.0)
         W = build_W(builder)
         Theta_ss = steady_state(W)
 
-        base = builder.n_ads + 1
+        base = builder.n_species
         occ_to_weights = {}
         for s in range(builder.n_states):
             state = decode_state(s, l, base)
@@ -169,12 +166,12 @@ class TestSteadyStateDistribution:
     def test_ratio_between_occupation_classes(self, tile_name):
         """Mean Theta per microstate in class n+1 / class n = r."""
         r = 2.0
-        topo, l = TILES[tile_name]
+        l = TILES[tile_name].l()
         builder = simple_builder(tile_name, k_ads=r, k_des=1.0)
         W = build_W(builder)
         Theta_ss = steady_state(W)
 
-        base = builder.n_ads + 1
+        base = builder.n_species
         occ_to_mean = {}
         for s in range(builder.n_states):
             state = decode_state(s, l, base)
@@ -211,8 +208,8 @@ class TestInteractions:
         Theta_ni = run_ss(builder_ni)
         Theta_int = run_ss(builder_int)
 
-        theta_ni = coverages(builder_ni, Theta_ni, ["empty", "A"])["A"]
-        theta_int = coverages(builder_int, Theta_int, ["empty", "A"])["A"]
+        theta_ni = coverages(builder_ni, Theta_ni)["A"]
+        theta_int = coverages(builder_int, Theta_int)["A"]
 
         assert theta_int > theta_ni, (
             f"{tile_name}: attractive eps={eps} should raise coverage "
@@ -231,8 +228,8 @@ class TestInteractions:
         Theta_ni = run_ss(builder_ni)
         Theta_int = run_ss(builder_int)
 
-        theta_ni = coverages(builder_ni, Theta_ni, ["empty", "A"])["A"]
-        theta_int = coverages(builder_int, Theta_int, ["empty", "A"])["A"]
+        theta_ni = coverages(builder_ni, Theta_ni)["A"]
+        theta_int = coverages(builder_int, Theta_int)["A"]
 
         assert theta_int < theta_ni, (
             f"{tile_name}: repulsive eps={eps} should lower coverage "

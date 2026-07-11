@@ -24,3 +24,7 @@ dev = [
 python-source = "python"
 module-name = "me_mkm._me_mkm"
 features = ["pyo3/extension-module"]
+
+# Rebuild the extension when the Rust sources change (uv caches on these keys).
+[tool.uv]
+cache-keys = [{ file = "src/**/*.rs" }]

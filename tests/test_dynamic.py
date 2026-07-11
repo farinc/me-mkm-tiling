@@ -26,7 +26,7 @@ from me_mkm import (
     InteractionModel,
     MEMKMBuilder,
     Reaction,
-    Topology,
+    TileSettings,
     build_graph,
     build_W_components,
     coverage_ic,
@@ -38,8 +38,8 @@ from scipy.integrate import solve_ivp
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-TOPO = Topology.square(d=3)
 L = 8  # ME-MKM tile: 4-regular, 2**8=256 states, small enough to solve exactly
+TOPO = TileSettings.square(sites=L, d=3)  # tile settings (has .deltas, .sites)
 Z = 2 * len(TOPO.deltas)  # lattice coordination number (4 for fish-scale)
 K_DES = 1.0
 rs = 42  # random state
@@ -75,9 +75,12 @@ def build_system(title, l, eps, k_des=K_DES):
         ),
     ]
     builder = MEMKMBuilder(
-        l=l, topology=TOPO, reactions=reactions, interaction=interaction
+        tile_settings=TileSettings.square(sites=l, d=3),
+        reactions=reactions,
+        species_names=["*", "A"],
+        interaction=interaction,
     )
-    graph_data = build_graph(builder, species_names=["*", "A"])
+    graph_data = build_graph(builder)
     save_html(graph_data, f"tests/output/{title}.html")
 
     return builder
@@ -115,7 +118,7 @@ def solve_memkm_dynamic(
         atol=1e-12,
     )
     assert sol.success, sol.message
-    return coverages(builder, sol.y, species_names=["empty", "A"])["A"]
+    return coverages(builder, sol.y)["A"]
 
 
 def solve_mean_field(eps, k_ads_func, k_des, t_eval, z=Z, theta0=0.0):
@@ -242,7 +245,6 @@ N_TRIALS = 60
 N_STEPS_PER_PERIOD = 20
 N_PERIODS = 5
 T_EVAL = np.linspace(0.0, N_PERIODS * PERIOD, N_PERIODS * N_STEPS_PER_PERIOD + 1)
-theta0 = {"A": 0.25, "B": 0.25, "*": 0.5}
 
 
 def k_ads_func(t):
@@ -252,9 +254,8 @@ def k_ads_func(t):
 def test_dynamic_w_vs_kmc():
     builder = build_system("dynamic_w_vs_kmc", L, EPS)
 
-    theta_exact = solve_memkm_dynamic(
-        builder, k_ads_func, K_DES, T_EVAL, theta0_cov=theta0
-    )
+    # Both the exact solve and the KMC ensemble start from a clean surface.
+    theta_exact = solve_memkm_dynamic(builder, k_ads_func, K_DES, T_EVAL)
     theta_mf = solve_mean_field(EPS, k_ads_func, K_DES, T_EVAL)
 
     trials = run_kmc_dynamic_ensemble(

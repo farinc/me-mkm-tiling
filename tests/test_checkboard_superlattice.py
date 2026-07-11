@@ -41,7 +41,7 @@ from me_mkm import (
     InteractionModel,
     MEMKMBuilder,
     Reaction,
-    Topology,
+    TileSettings,
     build_W,
     coverages,
     production_rate,
@@ -57,19 +57,15 @@ K_DES = 1.0
 K_RXN = 1.0  # krxn = 1.0 * kdes, matching Figure 3
 Z = 4  # lattice coordination number (square lattice / fish-scale / Greek cross)
 
-FISH_SCALE = (
-    8,
-    Topology.square(d=3),
-)  # (l, topology): smallest checkerboard-capable tile
-GREEK_CROSS = (
-    5,
-    Topology.square(d=2),
-)  # (l, topology): K_5, cannot host a checkerboard
+# smallest checkerboard-capable tile
+FISH_SCALE = TileSettings.square(sites=8, d=3)
+# K_5, cannot host a checkerboard
+GREEK_CROSS = TileSettings.square(sites=5, d=2)
 
 _NONINTERACTING_PAIR = InteractionModel.noninteracting(2, 1.0)
 
 
-def build_system(K, l, topology):
+def build_system(K, tile_settings):
     """Scheme 1 (ads/des, repulsive) + Scheme 2 (dimerization, uncorrected)."""
     interaction = InteractionModel([[0.0, 0.0], [0.0, EPS]])
     reactions = [
@@ -80,16 +76,19 @@ def build_system(K, l, topology):
         ),
     ]
     return MEMKMBuilder(
-        l=l, topology=topology, reactions=reactions, interaction=interaction
+        tile_settings=tile_settings,
+        reactions=reactions,
+        species_names=["*", "A"],
+        interaction=interaction,
     )
 
 
-def exact_theta_rate(K, l, topology):
+def exact_theta_rate(K, tile_settings):
     """Exact tile ME-MKM steady-state coverage and dimerization rate (paper eq. 4)."""
-    builder = build_system(K, l, topology)
+    builder = build_system(K, tile_settings)
     W = build_W(builder, steady_state=True)
     Theta_ss, _ = solve_steady_state(W)
-    theta = coverages(builder, Theta_ss, species_names=["empty", "A"])["A"]
+    theta = coverages(builder, Theta_ss)["A"]
     rate = production_rate(builder, Theta_ss, {"dimer": 1.0})
     return theta, rate
 
@@ -167,7 +166,14 @@ def fit_mf_to_kmc_rates(K_data, rate_data):
 L_KMC = 32
 N_STEPS_KMC = 200_000
 N_TRIALS_KMC = 5
+# Points where the l=8 tile and the l=32 ring agree to within tight kMC error,
+# so the quantitative assertions below are meaningful.
 K_KMC_POINTS = [1.0, 10.0, 100.0, 300.0, 1000.0, 3000.0, 10_000.0, 100_000.0]
+# The plot sweeps further (up to K=1e7). Above ~1e5 the dynamics get stiff
+# (adsorption ~1e7 vs repulsive desorption ~e^12 vs dimerization ~1) and the
+# fixed-event-count kMC rate is slow to converge, so those points carry large
+# (honest) error bars rather than being asserted on.
+K_KMC_PLOT_POINTS = K_KMC_POINTS + [1_000_000.0, 10_000_000.0]
 
 
 @lru_cache(maxsize=None)
@@ -181,7 +187,7 @@ def kmc_ensemble(K):
     thetas, rates = [], []
     for seed in range(1, N_TRIALS_KMC + 1):
         theta, rate = run_kmc_dimer_steady_state(
-            FISH_SCALE[1], L_KMC, K, K_RXN, eps=EPS, n_steps=N_STEPS_KMC, seed=seed
+            FISH_SCALE, L_KMC, K, K_RXN, eps=EPS, n_steps=N_STEPS_KMC, seed=seed
         )
         thetas.append(theta)
         rates.append(rate)
@@ -197,7 +203,7 @@ def kmc_ensemble(K):
 
 @pytest.mark.parametrize("K", K_KMC_POINTS)
 def test_fish_scale_coverage_matches_kmc(K):
-    theta_exact, _ = exact_theta_rate(K, *FISH_SCALE)
+    theta_exact, _ = exact_theta_rate(K, FISH_SCALE)
     theta_mean, theta_sem, _, _ = kmc_ensemble(K)
     # l=8,d=3's neighbor graph is complete bipartite (only 4 sites of each
     # parity, each a neighbor of all 4 opposite-parity sites) -- this is
@@ -215,7 +221,7 @@ def test_fish_scale_coverage_matches_kmc(K):
 
 @pytest.mark.parametrize("K", K_KMC_POINTS)
 def test_fish_scale_rate_matches_kmc(K):
-    _, rate_exact = exact_theta_rate(K, *FISH_SCALE)
+    _, rate_exact = exact_theta_rate(K, FISH_SCALE)
     _, _, rate_mean, rate_sem = kmc_ensemble(K)
     # A single trajectory's dimerization-event count is rare and noisy in the
     # plateau; the ensemble SEM captures that directly, plus a small absolute
@@ -236,7 +242,7 @@ PLATEAU_K_POINTS = [100.0, 300.0, 1000.0]
 
 @pytest.mark.parametrize("K", PLATEAU_K_POINTS)
 def test_mean_field_overpredicts_reactivity_at_matched_coverage(K):
-    theta_exact, rate_exact = exact_theta_rate(K, *FISH_SCALE)
+    theta_exact, rate_exact = exact_theta_rate(K, FISH_SCALE)
     theta_mf, rate_mf = mf_theta_rate(K)
 
     assert abs(theta_exact - theta_mf) < 0.1, (
@@ -256,8 +262,8 @@ def test_greek_cross_overpredicts_reactivity_at_matched_coverage(K):
     """Greek cross (K_5, complete graph) cannot host a checkerboard order at
     all, so like MF-MKM it fails to suppress the dimerization rate even
     though its coverage is in the same regime as the fish-scale tile's."""
-    theta_fish, rate_fish = exact_theta_rate(K, *FISH_SCALE)
-    theta_greek, rate_greek = exact_theta_rate(K, *GREEK_CROSS)
+    theta_fish, rate_fish = exact_theta_rate(K, FISH_SCALE)
+    theta_greek, rate_greek = exact_theta_rate(K, GREEK_CROSS)
 
     assert abs(theta_fish - theta_greek) < 0.15, (
         f"K={K}: coverages should be in the same regime (fish={theta_fish:.4f}, "
@@ -277,7 +283,7 @@ PLATEAU_K_RANGE = np.geomspace(50.0, 2000.0, 8)
 
 
 def test_fish_scale_coverage_plateau_is_tight():
-    thetas = np.array([exact_theta_rate(K, *FISH_SCALE)[0] for K in PLATEAU_K_RANGE])
+    thetas = np.array([exact_theta_rate(K, FISH_SCALE)[0] for K in PLATEAU_K_RANGE])
     spread = thetas.max() - thetas.min()
     assert spread < 0.05, (
         f"fish-scale coverage should stay pinned near 0.5 across nearly two "
@@ -287,7 +293,7 @@ def test_fish_scale_coverage_plateau_is_tight():
 
 
 def test_greek_cross_has_no_comparable_plateau():
-    thetas = np.array([exact_theta_rate(K, *GREEK_CROSS)[0] for K in PLATEAU_K_RANGE])
+    thetas = np.array([exact_theta_rate(K, GREEK_CROSS)[0] for K in PLATEAU_K_RANGE])
     spread = thetas.max() - thetas.min()
     assert spread > 0.15, (
         f"Greek cross cannot host a checkerboard order, so its coverage should "
@@ -311,14 +317,14 @@ PLOT_K_RANGE = np.logspace(-1, 7, 60)
 
 def test_figure3_plot():
     fish_theta, fish_rate = zip(
-        *[exact_theta_rate(K, *FISH_SCALE) for K in PLOT_K_RANGE]
+        *[exact_theta_rate(K, FISH_SCALE) for K in PLOT_K_RANGE]
     )
     greek_theta, greek_rate = zip(
-        *[exact_theta_rate(K, *GREEK_CROSS) for K in PLOT_K_RANGE]
+        *[exact_theta_rate(K, GREEK_CROSS) for K in PLOT_K_RANGE]
     )
 
     kmc_theta, kmc_theta_sem, kmc_rate, kmc_rate_sem = [], [], [], []
-    for K in K_KMC_POINTS:
+    for K in K_KMC_PLOT_POINTS:
         th, th_sem, r, r_sem = kmc_ensemble(K)
         kmc_theta.append(th)
         kmc_theta_sem.append(th_sem)
@@ -326,7 +332,7 @@ def test_figure3_plot():
         kmc_rate_sem.append(r_sem)
     kmc_rate = np.array(kmc_rate)
 
-    phi_fit, krxn_fit = fit_mf_to_kmc_rates(np.array(K_KMC_POINTS), kmc_rate)
+    phi_fit, krxn_fit = fit_mf_to_kmc_rates(np.array(K_KMC_PLOT_POINTS), kmc_rate)
     print(f"\nFitted MF-MKM: phi={phi_fit:.3e}, krxn={krxn_fit:.3f}*kdes")
     mf_theta, mf_rate = zip(
         *[mf_plain_theta_rate(phi_fit * K, krxn_fit) for K in PLOT_K_RANGE]
@@ -356,7 +362,7 @@ def test_figure3_plot():
         label="MF-MKM (fit to kMC rates)",
     )
     ax1.errorbar(
-        K_KMC_POINTS,
+        K_KMC_PLOT_POINTS,
         kmc_theta,
         yerr=2 * np.array(kmc_theta_sem),
         fmt="o",
@@ -392,7 +398,7 @@ def test_figure3_plot():
         label="MF-MKM (fit to kMC rates)",
     )
     ax2.errorbar(
-        K_KMC_POINTS,
+        K_KMC_PLOT_POINTS,
         kmc_rate,
         yerr=2 * np.array(kmc_rate_sem),
         fmt="o",
@@ -403,7 +409,6 @@ def test_figure3_plot():
         label=f"kMC (l=32 ring, n={N_TRIALS_KMC} trials, +/-2 SEM)",
     )
     ax2.set_xscale("log")
-    ax2.set_yscale("log")
     ax2.set_xlabel(r"$K[A] = k_{ads}/k_{des}$")
     ax2.set_ylabel(r"dimerization rate $r_{rxn}/k_{des}$")
     ax2.legend(loc="upper left", fontsize=8)

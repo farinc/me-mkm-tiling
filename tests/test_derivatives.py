@@ -16,7 +16,7 @@ from scipy.sparse.linalg import spsolve
 
 from me_mkm import (
     MEMKMBuilder,
-    Topology,
+    TileSettings,
     Reaction,
     InteractionModel,
     build_W,
@@ -36,7 +36,7 @@ from me_mkm import (
     production_rate_derivative,
 )
 
-TOPO, L = Topology.square(d=2), 5
+TILE, L = TileSettings.square(sites=5, d=2), 5
 
 
 def steady_state(W):
@@ -56,8 +56,8 @@ def make_builder(k_ads=1.0, k_des=1.0, eps=0.0, kbt=1.0):
         Reaction([0], [1], rate=k_ads, name="ads"),
         Reaction([1], [0], rate=k_des, name="des"),
     ]
-    return MEMKMBuilder(l=L, topology=TOPO, reactions=reactions,
-                         interaction=interaction)
+    return MEMKMBuilder(tile_settings=TILE, reactions=reactions,
+                        species_names=["*", "A"], interaction=interaction)
 
 
 # ===========================================================================
@@ -193,16 +193,16 @@ class TestCoverageDerivative:
             assemble_dW_dbeta(builder, dk_dbeta={})
         )
         dTheta = steady_state_derivative(lu, dWbar_dbeta, Theta_ss)
-        dtheta_analytic = coverages(builder, dTheta, ["empty", "A"])["A"]
+        dtheta_analytic = coverages(builder, dTheta)["A"]
 
         h = 1e-5
         theta_p = coverages(
             make_builder(k_ads, k_des, eps, kbt=1.0 / (beta0 + h)),
-            theta_ss_at(k_ads, k_des, eps, 1.0 / (beta0 + h)), ["empty", "A"]
+            theta_ss_at(k_ads, k_des, eps, 1.0 / (beta0 + h)),
         )["A"]
         theta_m = coverages(
             make_builder(k_ads, k_des, eps, kbt=1.0 / (beta0 - h)),
-            theta_ss_at(k_ads, k_des, eps, 1.0 / (beta0 - h)), ["empty", "A"]
+            theta_ss_at(k_ads, k_des, eps, 1.0 / (beta0 - h)),
         )["A"]
         dtheta_fd = (theta_p - theta_m) / (2 * h)
 
@@ -219,7 +219,7 @@ class TestProductionRate:
         k_ads, k_des = 1.3, 0.6
         builder = make_builder(k_ads=k_ads, k_des=k_des, eps=0.0)
         Theta_ss = steady_state(build_W(builder, steady_state=False))
-        theta_A = coverages(builder, Theta_ss, ["empty", "A"])["A"]
+        theta_A = coverages(builder, Theta_ss)["A"]
 
         r = production_rate(builder, Theta_ss, stoich={"des": 1.0})
         expected = k_des * theta_A

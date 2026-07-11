@@ -66,9 +66,6 @@ docs/_build/
 # PyCharm
 .idea/
 
-# VSCode
-.vscode/
-
 # Pyenv
 .python-version
 # pixi environments
@@ -77,3 +74,8 @@ docs/_build/
 
 # project stuff
 pdfs/
+
+# The generic bin/ rule above (virtualenv dirs) also matches src/bin/, but the
+# Rust stub generator lives there and must be tracked.
+!src/bin/
+!src/bin/*.rs

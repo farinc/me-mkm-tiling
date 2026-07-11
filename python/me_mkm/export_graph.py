@@ -3,9 +3,8 @@ Exports ME-MKM coverage-class transition graphs to JSON for memkm_viewer.html.
 If omitted, defaults to ['*', 'A*', 'B*', ...].
 """
 
-from collections import defaultdict
-
 from me_mkm._me_mkm import decode_state
+from me_mkm.coverage import coverage_classes
 
 _AUTO_COLORS = [
     "#1A5FA8",
@@ -95,17 +94,6 @@ def _reactions_from_builder(builder) -> list:
         )
     return result
 
-def neighbor_pairs(l, topology):
-    """All undirected neighbor pairs for topology on a ring of l sites."""
-    return sorted(
-        {
-            (min(i, (i + d) % l), max(i, (i + d) % l))
-            for i in range(l)
-            for d in topology.deltas
-        }
-    )
-
-
 def tile_style(topology):
     """Return topology.style as an int, defaulting to brickwork/square row."""
     try:
@@ -172,32 +160,22 @@ def site_positions(l, topology=None):
     # style 0: original brickwork icon layout
     return {i: [0, i] for i in range(l)}
 
-def build_coverage_groups(l, n_ads):
-    base = n_ads + 1
-    groups = defaultdict(list)
-    for idx in range(base**l):
-        state = decode_state(idx, l, base)
-        key = tuple(state.count(sp) for sp in range(1, n_ads + 1))
-        groups[key].append(state)
-    return groups
+def verify_uniformity(builder, groups, flat_reactions):
+    """Check that every reaction's reactive-match count is constant within each
+    coverage class (so a single per-class multiplier is well defined).
 
-
-def count_reactive_pairs(state, pattern_in, pairs):
-    if len(pattern_in) == 1:
-        return sum(1 for site in state if site == pattern_in[0])
-    c = 0
-    for si, sj in pairs:
-        for s0, s1 in [(si, sj), (sj, si)]:
-            if state[s0] == pattern_in[0] and state[s1] == pattern_in[1]:
-                c += 1
-    return c
-
-
-def verify_uniformity(groups, flat_reactions, pairs):
-    for key, states in groups.items():
+    groups maps a coverage-class counts-tuple to that class's microstate
+    indices (from me_mkm.coverage.coverage_classes). The reactive counting is
+    done in Rust via builder.count_reactive.
+    """
+    base = builder.n_species
+    for key, indices in groups.items():
         for rxn in flat_reactions:
             counts = {
-                count_reactive_pairs(st, rxn["pattern_in"], pairs) for st in states
+                builder.count_reactive(
+                    decode_state(int(idx), builder.l, base), rxn["pattern_in"]
+                )
+                for idx in indices
             }
             if len(counts) > 1:
                 return False, key, rxn["name"]
@@ -281,17 +259,18 @@ def build_graph(
         Map from counts-tuple to CSS colour string.
     """
     l = builder.l
-    n_ads = builder.n_ads
-    topology = builder.topology
+    n_ads = builder.n_species - 1  # species 1..n_species-1 (index 0 is the reference)
+    topology = builder.tile_settings
     d = topology.d()
 
-    # species_names includes the empty site (index 0)
+    # species_names has the reference species at index 0; default to the
+    # builder's own names.
     if species_names is None:
-        all_species = ["*"] + [chr(65 + i) + "*" for i in range(n_ads)]
+        all_species = list(builder.species_names)
     elif len(species_names) == n_ads + 1:
         all_species = list(species_names)
     else:
-        # Adsorbate-only list passed — prepend empty site
+        # Adsorbate-only list passed — prepend the index-0 reference species
         all_species = ["*"] + list(species_names)
     adsorbate_names = all_species[1:]  # for coverage-class labels
 
@@ -301,8 +280,7 @@ def build_graph(
         else _reactions_from_builder(builder)
     )
 
-    pairs = neighbor_pairs(l, topology)
-    groups = build_coverage_groups(l, n_ads)
+    groups = coverage_classes(builder)
     style = tile_style(topology)
     icon_pos = site_positions(l, topology)
     icon_max_col = max(c for [r, c] in icon_pos.values()) + 1
@@ -368,7 +346,7 @@ def build_graph(
             }
         )
 
-    ok, bad_key, bad_rxn = verify_uniformity(groups, flat, pairs)
+    ok, bad_key, bad_rxn = verify_uniformity(builder, groups, flat)
     if not ok:
         print(
             f'WARNING: class {bad_key} rxn "{bad_rxn}" non-uniform — '
@@ -383,12 +361,18 @@ def build_graph(
         return state
 
     def avg_pairs(counts, rxn):
-        rep = canonical(counts)
+        # Uniform classes (the common case): one representative state suffices.
+        # Non-uniform: average the reactive count over every state in the class.
         if ok:
-            return count_reactive_pairs(rep, rxn["pattern_in"], pairs)
+            return builder.count_reactive(canonical(counts), rxn["pattern_in"])
+        base = builder.n_species
+        indices = groups[counts]
         return sum(
-            count_reactive_pairs(st, rxn["pattern_in"], pairs) for st in groups[counts]
-        ) / len(groups[counts])
+            builder.count_reactive(
+                decode_state(int(idx), builder.l, base), rxn["pattern_in"]
+            )
+            for idx in indices
+        ) / len(indices)
 
     def is_absorbing(counts):
         return all(avg_pairs(counts, r) == 0 for r in flat)
