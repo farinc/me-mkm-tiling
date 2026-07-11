@@ -59,6 +59,19 @@ body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;height:10
 #export-status{font-size:10px;color:#64748b;line-height:1.45;margin-top:7px;min-height:1.45em}
 .help{font-size:10px;color:#64748b;line-height:1.45;margin-top:6px}
 .ctrl-row input[type=range]{border:none;padding:2px 0;accent-color:#475569;width:100%;cursor:pointer}
+.ctrl-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ctrl-grid .ctrl-row{margin:0}
+.editor-title{font-size:12px;font-weight:600;color:#1e293b;line-height:1.5;margin-bottom:4px}
+.editor-sub{font-size:10px;color:#64748b;line-height:1.45;margin-bottom:8px}
+.hidden{display:none !important}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#edge-json-preview{width:100%;min-height:150px;resize:vertical;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#334155;padding:7px}
+#edge-editor-status{min-height:1.45em}
+.interactive-hint{font-size:10px;color:#64748b;line-height:1.5;margin-bottom:8px}
+.mode-row{display:flex;gap:7px;align-items:center;margin:8px 0 10px}
+.mode-row button{flex:1;padding:6px 8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:5px;color:#334155;font-size:12px;cursor:pointer}
+.mode-row button:hover:not(:disabled){background:#e2e8f0}
+.mode-row button:disabled{opacity:.45;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -110,6 +123,20 @@ body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;height:10
     </div>
 
     <div class="panel">
+      <h3>Graph layout</h3>
+      <div class="ctrl-row">
+        <label for="graph-layout-select">Coverage-class arrangement</label>
+        <select id="graph-layout-select" disabled>
+          <option value="coverage">Canonical symmetric layout</option>
+          <option value="exported">Use exported x/y positions</option>
+        </select>
+      </div>
+      <div id="graph-layout-help" class="help">
+        Canonical symmetric layout: 1 adsorbate → line, 2 adsorbates → equilateral triangle, 3 adsorbates → square, and higher counts → regular polygon.
+      </div>
+    </div>
+
+    <div class="panel">
       <h3>Export graph</h3>
       <div class="ctrl-row">
         <label for="export-scope">Exported region</label>
@@ -136,6 +163,104 @@ body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;height:10
     <div class="panel">
       <h3>Selected state</h3>
       <div id="nd"><span class="muted">Click a node.</span></div>
+    </div>
+
+    <div class="panel" id="edge-editor-panel">
+      <h3>Selected transition</h3>
+      <div id="edge-editor-empty"><span class="muted">Click an edge to edit its geometry.</span></div>
+      <div id="edge-editor-form" class="hidden">
+        <div id="edge-editor-title" class="editor-title"></div>
+        <div id="edge-editor-sub" class="editor-sub"></div>
+
+        <div id="edge-interactive-block">
+          <div class="interactive-hint" id="edge-interactive-help">
+            Natural editing mode: click an edge, choose "Smooth", then drag on the highlighted edge to create a control point. Drag existing points to move them. Right-click the selected edge or anchor for add/remove actions.
+          </div>
+          <div class="mode-row">
+            <button id="edge-make-straight-btn" type="button">Straight</button>
+            <button id="edge-make-smooth-btn" type="button">Smooth</button>
+          </div>
+        </div>
+
+        <div class="ctrl-row" id="edge-curve-style-row">
+          <label for="edge-curve-style">Curve style</label>
+          <select id="edge-curve-style">
+            <option value="bezier">Bezier</option>
+            <option value="unbundled-bezier">Unbundled bezier</option>
+            <option value="straight">Straight</option>
+            <option value="segments">Segments</option>
+          </select>
+        </div>
+
+        <div id="edge-nonloop-fields">
+          <div class="ctrl-row">
+            <label for="edge-distances">Control-point distances</label>
+            <input id="edge-distances" type="text" placeholder="e.g. 70 or 45 -30">
+          </div>
+          <div class="ctrl-row">
+            <label for="edge-weights">Control-point weights</label>
+            <input id="edge-weights" type="text" placeholder="e.g. 0.5 or 0.3 0.72">
+          </div>
+          <div class="ctrl-grid">
+            <div class="ctrl-row">
+              <label for="edge-label-x">Label x</label>
+              <input id="edge-label-x" type="number" step="1">
+            </div>
+            <div class="ctrl-row">
+              <label for="edge-label-y">Label y</label>
+              <input id="edge-label-y" type="number" step="1">
+            </div>
+            <div class="ctrl-row">
+              <label for="edge-source-distance">Source offset</label>
+              <input id="edge-source-distance" type="number" step="1">
+            </div>
+            <div class="ctrl-row">
+              <label for="edge-target-distance">Target offset</label>
+              <input id="edge-target-distance" type="number" step="1">
+            </div>
+          </div>
+        </div>
+
+        <div id="edge-loop-fields" class="hidden">
+          <div class="ctrl-grid">
+            <div class="ctrl-row">
+              <label for="loop-direction">Loop direction (deg)</label>
+              <input id="loop-direction" type="number" step="1">
+            </div>
+            <div class="ctrl-row">
+              <label for="loop-sweep">Loop sweep (deg)</label>
+              <input id="loop-sweep" type="number" step="1">
+            </div>
+            <div class="ctrl-row">
+              <label for="loop-step">Loop radius / step</label>
+              <input id="loop-step" type="number" step="1">
+            </div>
+            <div class="ctrl-row">
+              <label for="loop-label-x">Loop label x</label>
+              <input id="loop-label-x" type="number" step="1">
+            </div>
+            <div class="ctrl-row">
+              <label for="loop-label-y">Loop label y</label>
+              <input id="loop-label-y" type="number" step="1">
+            </div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button id="edge-apply-btn" type="button">Apply</button>
+          <button id="edge-reset-btn" type="button">Reset edge</button>
+        </div>
+        <div class="btn-row">
+          <button id="edge-copy-btn" type="button">Copy edge JSON</button>
+          <button id="edge-copy-all-btn" type="button">Copy all edits</button>
+        </div>
+
+        <div class="ctrl-row">
+          <label for="edge-json-preview">Edit JSON preview</label>
+          <textarea id="edge-json-preview" readonly></textarea>
+        </div>
+        <div id="edge-editor-status" class="help"></div>
+      </div>
     </div>
 
     <div class="panel">
@@ -165,6 +290,25 @@ body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;height:10
 <script type="module">
 import cytoscape from 'https://cdn.jsdelivr.net/npm/cytoscape@3.34.0/+esm';
 
+window.cytoscape = cytoscape;
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Could not load ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+function loadCss(href) {
+  const l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = href;
+  document.head.appendChild(l);
+}
+
 let svgExtensionReady = false;
 let svgExtensionError = null;
 try {
@@ -177,11 +321,196 @@ try {
   console.warn('cytoscape-svg could not be loaded; SVG/PDF export will be disabled.', err);
 }
 
+let interactiveEdgeEditingReady = false;
+let interactiveEdgeEditingError = null;
+try {
+  loadCss('https://cdn.jsdelivr.net/npm/cytoscape-context-menus/cytoscape-context-menus.css');
+  await loadScript('https://cdn.jsdelivr.net/npm/konva@7.0.3/konva.min.js');
+  await loadScript('https://cdn.jsdelivr.net/npm/cytoscape-context-menus/cytoscape-context-menus.js');
+  await loadScript('https://cdn.jsdelivr.net/npm/cytoscape-undo-redo/cytoscape-undo-redo.js');
+  await loadScript('https://cdn.jsdelivr.net/npm/cytoscape-edge-editing@5.0.0/cytoscape-edge-editing.js');
+  interactiveEdgeEditingReady = typeof cytoscape !== 'undefined' && typeof cytoscape.prototype === 'undefined' ? true : true;
+} catch (err) {
+  interactiveEdgeEditingError = err;
+  console.warn('Interactive edge editing could not be loaded.', err);
+}
+
 // ── state ──────────────────────────────────────────────────────────────────────
 let G = null, NM = {}, cy = null;
 let basePositions = {};   // nodeId -> {x, y} at spread=1.0 (post ps-scale)
 let cyFontSize = 12;
 let cySpread = 1.0;
+let edgeDefaults = {};
+let selectedEdgeId = null;
+let edgeEditingInstance = null;
+
+// Self-loop placement controls.  Angles are Cytoscape loop directions in
+// degrees: -90 = above, 0 = right, 90 = below, 180 = left.
+// Increase directionSpan to separate several loops angularly; increase
+// radialStep to nest them farther apart from the node.
+const LOOP_LAYOUT = {
+  singleDirection: -90,
+  directionCenter: -90,
+  directionSpan: 170,
+  baseSweep: 58,
+  sweepStep: 8,
+  baseRadius: 48,
+  radialStep: 22,
+};
+
+// Optional manual overrides keyed by edge id.  Example:
+// const LOOP_OVERRIDES = {
+//   'edge_12': { direction: -170, sweep: 52, step: 62, labelY: -10 },
+//   'edge_13': { direction:  -10, sweep: 52, step: 84, labelY: -10 },
+// };
+const LOOP_OVERRIDES = {};
+
+// Optional geometry overrides for ANY edge, keyed by edge id.  A manually
+// controlled connection uses Cytoscape's `unbundled-bezier` curve so each edge
+// can have its own control point(s), independent of parallel edges.
+//
+// A single-control-point example:
+// const EDGE_OVERRIDES = {
+//   'edge_7': { distances: 70, weights: 0.50, labelY: -8 },
+//   'edge_8': { distances: -70, weights: 0.50, labelY: 8 },
+// };
+//
+// Multiple control points are also supported:
+//   { distances: [45, -35], weights: [0.30, 0.72] }
+//
+// The same values can be supplied per edge in the JSON with fields:
+//   curve_style, control_point_distances, control_point_weights,
+//   edge_label_x, edge_label_y, source_distance, target_distance.
+const EDGE_OVERRIDES = {};
+
+function finiteNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function numberList(value) {
+  if (Array.isArray(value)) {
+    const vals = value.map(Number).filter(Number.isFinite);
+    return vals.length ? vals.join(' ') : '';
+  }
+  if (value == null || value === '') return '';
+  if (typeof value === 'string') {
+    const vals = value.split(/[\s,]+/).map(Number).filter(Number.isFinite);
+    return vals.length ? vals.join(' ') : '';
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? String(n) : '';
+}
+
+function parseNumInput(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function stripDeg(value, fallback = 0) {
+  if (value == null) return fallback;
+  const n = Number(String(value).replace(/deg$/i, ''));
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function compareNum(a, b, eps = 1e-9) {
+  return Math.abs(Number(a) - Number(b)) <= eps;
+}
+
+function listStringToValue(value) {
+  const norm = numberList(value);
+  if (!norm) return undefined;
+  const parts = norm.split(/\s+/).map(Number).filter(Number.isFinite);
+  return parts.length <= 1 ? parts[0] : parts;
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  ta.remove();
+  return true;
+}
+
+function hasInteractiveControlPoints(edgeEl) {
+  return Boolean(edgeEl && edgeEl.hasClass && edgeEl.hasClass('edgecontrolediting-hascontrolpoints'));
+}
+
+function interactiveWeights(edgeEl) {
+  const vals = edgeEl?.data?.('cyedgecontroleditingWeights');
+  return Array.isArray(vals) ? vals : [];
+}
+
+function interactiveDistances(edgeEl) {
+  const vals = edgeEl?.data?.('cyedgecontroleditingDistances');
+  return Array.isArray(vals) ? vals : [];
+}
+
+function applySmoothMode(edgeEl) {
+  if (!edgeEl || edgeEl.empty() || edgeEl.data('isLoop')) return;
+  edgeEl.removeClass('edgebendediting-hasbendpoints edgebendediting-hasmultiplebendpoints');
+  edgeEl.addClass('edgecontrolediting-hascontrolpoints');
+  const weights = interactiveWeights(edgeEl);
+  const distances = interactiveDistances(edgeEl);
+  if (!weights.length && edgeEl.data('controlPointWeights')) {
+    const parsed = numberList(edgeEl.data('controlPointWeights')).split(/\s+/).filter(Boolean).map(Number).filter(Number.isFinite);
+    edgeEl.data('cyedgecontroleditingWeights', parsed);
+  } else if (!weights.length) {
+    edgeEl.data('cyedgecontroleditingWeights', []);
+  }
+  if (!distances.length && edgeEl.data('controlPointDistances')) {
+    const parsed = numberList(edgeEl.data('controlPointDistances')).split(/\s+/).filter(Boolean).map(Number).filter(Number.isFinite);
+    edgeEl.data('cyedgecontroleditingDistances', parsed);
+  } else if (!distances.length) {
+    edgeEl.data('cyedgecontroleditingDistances', []);
+  }
+  edgeEl.data({ hasManualCurve: true, curveStyle: 'unbundled-bezier' });
+  if (edgeEditingInstance?.initAnchorPoints) edgeEditingInstance.initAnchorPoints(edgeEl);
+  cy.style().update();
+}
+
+function applyStraightMode(edgeEl) {
+  if (!edgeEl || edgeEl.empty() || edgeEl.data('isLoop')) return;
+  edgeEl.removeClass('edgecontrolediting-hascontrolpoints edgecontrolediting-hasmultiplecontrolpoints edgebendediting-hasbendpoints edgebendediting-hasmultiplebendpoints');
+  edgeEl.data({
+    cyedgecontroleditingWeights: [],
+    cyedgecontroleditingDistances: [],
+    cyedgebendeditingWeights: [],
+    cyedgebendeditingDistances: [],
+    hasManualCurve: false,
+    curveStyle: 'straight',
+    controlPointDistances: '0',
+    controlPointWeights: '0.5',
+  });
+  cy.style().update();
+}
+
+function setInteractiveButtonState(edgeEl) {
+  const straightBtn = document.getElementById('edge-make-straight-btn');
+  const smoothBtn = document.getElementById('edge-make-smooth-btn');
+  const help = document.getElementById('edge-interactive-help');
+  const block = document.getElementById('edge-interactive-block');
+  if (!block) return;
+  if (!edgeEl || edgeEl.empty()) {
+    block.classList.add('hidden');
+    return;
+  }
+  block.classList.remove('hidden');
+  const isLoop = Boolean(edgeEl.data('isLoop'));
+  if (straightBtn) straightBtn.disabled = isLoop;
+  if (smoothBtn) smoothBtn.disabled = isLoop;
+  if (help) {
+    help.textContent = isLoop
+      ? 'Self-loop selected. The natural draggable-handle mode currently applies to node-to-node edges. Use the loop controls below for this edge.'
+      : 'Natural editing mode: click “Smooth”, then drag on the highlighted edge to create a control point. Drag handles to move them. Right-click the selected edge or anchor for add/remove actions.';
+  }
+}
 
 // ── tile icon dimensions ───────────────────────────────────────────────────────
 const CELL = 16, CGAP = 2, CPAD = 4;
@@ -432,6 +761,115 @@ function minGap(vals) {
   return m;
 }
 
+
+function graphLayoutName(mode) {
+  return mode === 'exported' ? 'exported positions' : 'canonical coverage layout';
+}
+
+function regularPolygonVertices(m) {
+  const verts = [];
+  let angle0;
+  if (m === 2) angle0 = Math.PI;
+  else if (m % 2 === 1) angle0 = Math.PI / 2;
+  else angle0 = Math.PI / 2 + Math.PI / m;
+  for (let i = 0; i < m; i++) {
+    const a = angle0 - i * 2 * Math.PI / m;
+    verts.push({ x: Math.cos(a), y: Math.sin(a) });
+  }
+  return verts;
+}
+
+function coverageLayoutPositions(nodes, meta, nodeW, nodeH) {
+  const l = clampInt(meta?.l, 1, 50000, Math.max(1, Math.round(nodes[0]?.canonical_state?.length || 1)));
+  const speciesCount = Math.max(1, nodes[0]?.counts?.length || 1);
+  const componentCount = speciesCount + 1; // include vacancies
+  const verts = regularPolygonVertices(componentCount);
+
+  const desiredGap = Math.max(nodeW, nodeH) + 34;
+  const minChord = componentCount === 2 ? 2 : 2 * Math.sin(Math.PI / componentCount);
+  // Use normalized coverages and a bounded radius. This prevents huge or NaN
+  // coordinates from making Cytoscape's preset layout disappear.
+  const idealRadius = l * desiredGap / Math.max(minChord, 1e-6);
+  const radius = Math.max(180, Math.min(1600, idealRadius));
+
+  const raw = {};
+  const collisionGroups = new Map();
+
+  nodes.forEach((n, nodeIndex) => {
+    const counts = Array.isArray(n.counts) ? n.counts.map(v => Number(v) || 0) : [];
+    const occupied = counts.reduce((s, v) => s + v, 0);
+    const vacancy = Math.max(0, l - occupied);
+    const comp = [vacancy, ...counts];
+    const denom = Math.max(1, comp.reduce((s, v) => s + v, 0));
+
+    let x = 0, y = 0;
+    comp.forEach((c, i) => {
+      const f = c / denom;
+      x += f * verts[i].x;
+      y += f * verts[i].y;
+    });
+
+    x *= radius;
+    y *= radius;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      // Deterministic fallback; never allow an invalid preset position.
+      const a = 2 * Math.PI * nodeIndex / Math.max(1, nodes.length);
+      x = radius * Math.cos(a);
+      y = radius * Math.sin(a);
+    }
+
+    x = Number(x.toFixed(6));
+    y = Number(y.toFixed(6));
+    raw[n.id] = { x, y };
+    const key = `${x.toFixed(4)},${y.toFixed(4)}`;
+    if (!collisionGroups.has(key)) collisionGroups.set(key, []);
+    collisionGroups.get(key).push(n);
+  });
+
+  const finalPos = {};
+  collisionGroups.forEach(group => {
+    group.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    if (group.length === 1) {
+      finalPos[group[0].id] = raw[group[0].id];
+      return;
+    }
+    const cols = Math.ceil(Math.sqrt(group.length));
+    const rows = Math.ceil(group.length / cols);
+    const collisionGap = Math.max(nodeW, nodeH) + 12;
+    group.forEach((node, idx) => {
+      const c = idx % cols;
+      const r = Math.floor(idx / cols);
+      const dx = (c - (cols - 1) / 2) * collisionGap;
+      const dy = (r - (rows - 1) / 2) * collisionGap;
+      finalPos[node.id] = { x: raw[node.id].x + dx, y: raw[node.id].y + dy };
+    });
+  });
+
+  return { positions: finalPos, scalePositions: raw, speciesCount, componentCount };
+}
+
+function exportedLayoutPositions(nodes) {
+  const out = {};
+  nodes.forEach(n => { out[n.id] = { x: n.x, y: n.y }; });
+  return { positions: out, scalePositions: out };
+}
+
+function buildGraphLayoutPositions(mode, nodes, meta, nodeW, nodeH) {
+  if (mode === 'exported') return exportedLayoutPositions(nodes, meta);
+  return coverageLayoutPositions(nodes, meta, nodeW, nodeH);
+}
+
+function updateGraphLayoutHelp() {
+  const sel = document.getElementById('graph-layout-select');
+  const help = document.getElementById('graph-layout-help');
+  if (!sel || !help) return;
+  if (sel.value === 'exported') {
+    help.textContent = 'Use the x/y coordinates that came from the exported JSON.';
+  } else {
+    help.textContent = 'Canonical symmetric layout: 1 adsorbate → line, 2 adsorbates → equilateral triangle, 3 adsorbates → square, and higher counts → regular polygon. Coverage classes that would otherwise coincide are spread slightly to keep them visible.';
+  }
+}
+
 // ── export helpers ────────────────────────────────────────────────────────────
 function setExportEnabled(enabled) {
   const canExport = Boolean(enabled && svgExtensionReady && cy && typeof cy.svg === 'function');
@@ -555,14 +993,17 @@ async function exportPdf() {
 function load(data) {
   G = data;
   NM = {};
+  edgeDefaults = {};
+  selectedEdgeId = null;
   G.nodes.forEach(n => NM[n.id] = n);
 
   const m = G.meta;
   const allSp = m.all_species || ['*', ...(m.species_names || [])];
 
   document.getElementById('title').textContent = m.title || `l=${m.l}, d=${m.d}`;
+  const graphLayoutMode = document.getElementById('graph-layout-select')?.value || 'coverage';
   document.getElementById('meta').textContent =
-    `${m.n_classes} states · ${G.edges.length} transitions · ${m.n_states} microstates · ${shapeName(document.getElementById('shape-select')?.value || 'brick-strip')}` +
+    `${m.n_classes} states · ${G.edges.length} transitions · ${m.n_states} microstates · ${shapeName(document.getElementById('shape-select')?.value || 'brick-strip')} · ${graphLayoutName(graphLayoutMode)}` +
     (m.uniform ? '' : ' · ⚠ non-uniform');
 
   const warn = document.getElementById('warn');
@@ -592,6 +1033,9 @@ function load(data) {
 
   const shapeSel = document.getElementById('shape-select');
   if (shapeSel) shapeSel.disabled = false;
+  const graphLayoutSel = document.getElementById('graph-layout-select');
+  if (graphLayoutSel) graphLayoutSel.disabled = false;
+  updateGraphLayoutHelp();
   setExportEnabled(true);
   const currentShape = shapeSel?.value || 'brick-strip';
   updateShapeInfo(currentShape);
@@ -600,21 +1044,26 @@ function load(data) {
   const tileLayout = buildTileLayout(currentShape, G.site_positions, m);
   const nodeW = tileLayout.W, nodeH = tileLayout.H;
 
-  // Scale positions so nodes don't overlap, using a tighter base gap than
-  // before so the default view isn't excessively spread. The spread slider
-  // multiplies on top of this for user adjustment.
-  const gx = minGap(G.nodes.map(n => n.x));
-  const gy = minGap(G.nodes.map(n => n.y));
-  const sx = isFinite(gx) && gx < nodeW + 6 ? (nodeW + 6) / gx : 1.0;
-  const sy = isFinite(gy) && gy < nodeH + 6 ? (nodeH + 6) / gy : 1.0;
-  const ps = Math.max(1.0, sx, sy);
+  // Canonical coverage coordinates are already scaled in graph pixels.
+  // Exported coordinates retain the older overlap-protection scaling.
+  const graphLayout = buildGraphLayoutPositions(graphLayoutMode, G.nodes, m, nodeW, nodeH);
+  let ps = 1.0;
+  if (graphLayoutMode === 'exported') {
+    const scaleVals = Object.values(graphLayout.scalePositions);
+    const gx = minGap(scaleVals.map(p => p.x));
+    const gy = minGap(scaleVals.map(p => p.y));
+    const sx = Number.isFinite(gx) && gx > 0 && gx < nodeW + 12 ? (nodeW + 12) / gx : 1.0;
+    const sy = Number.isFinite(gy) && gy > 0 && gy < nodeH + 12 ? (nodeH + 12) / gy : 1.0;
+    ps = Math.max(1.0, sx, sy);
+  }
   cySpread = parseFloat(document.getElementById('spread-slider')?.value || '1.0');
 
   const elements = [];
 
   basePositions = {};
   G.nodes.forEach(n => {
-    basePositions[n.id] = { x: n.x * ps, y: n.y * ps };
+    const p = graphLayout.positions[n.id] || { x: n.x, y: n.y };
+    basePositions[n.id] = { x: p.x * ps, y: p.y * ps };
     elements.push({
       data: {
         id: n.id,
@@ -622,24 +1071,110 @@ function load(data) {
         borderColor: '#1e293b',
         label: 'Θ(' + n.counts.join(',') + ')',
       },
-      position: { x: n.x * ps * cySpread, y: n.y * ps * cySpread },
+      position: { x: p.x * ps * cySpread, y: p.y * ps * cySpread },
+    });
+  });
+
+  // Give self-transitions explicit loop geometry.  Cytoscape otherwise places
+  // several loops on top of one another, which makes their arrows and labels
+  // look like short hooks attached to the node.
+  const selfLoopsByNode = new Map();
+  G.edges.forEach(e => {
+    if (e.source !== e.target) return;
+    if (!selfLoopsByNode.has(e.source)) selfLoopsByNode.set(e.source, []);
+    selfLoopsByNode.get(e.source).push(e);
+  });
+
+  const loopGeometry = new Map();
+  selfLoopsByNode.forEach((edges, nodeId) => {
+    // Keep the order deterministic so the same reaction gets the same side
+    // after a reload.
+    edges.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+    edges.forEach((e, i) => {
+      const n = edges.length;
+      const fraction = n <= 1 ? 0.5 : i / (n - 1);
+      const defaultDirection = n === 1
+        ? LOOP_LAYOUT.singleDirection
+        : LOOP_LAYOUT.directionCenter - LOOP_LAYOUT.directionSpan / 2
+          + LOOP_LAYOUT.directionSpan * fraction;
+
+      // Alternate radial distance slightly as well as angle.  This prevents
+      // two loops with similar directions from lying directly on each other.
+      const defaultStep = LOOP_LAYOUT.baseRadius + LOOP_LAYOUT.radialStep * i;
+      const defaultSweep = Math.max(34, LOOP_LAYOUT.baseSweep - LOOP_LAYOUT.sweepStep * i);
+
+      // Overrides may be provided either directly in the graph JSON or in the
+      // LOOP_OVERRIDES object above. JSON fields are:
+      // loop_direction, loop_sweep, loop_step, loop_label_x, loop_label_y.
+      const manual = {
+        ...LOOP_OVERRIDES[e.id],
+        ...(e.loop_direction != null ? { direction: e.loop_direction } : {}),
+        ...(e.loop_sweep != null ? { sweep: e.loop_sweep } : {}),
+        ...(e.loop_step != null ? { step: e.loop_step } : {}),
+        ...(e.loop_label_x != null ? { labelX: e.loop_label_x } : {}),
+        ...(e.loop_label_y != null ? { labelY: e.loop_label_y } : {}),
+      };
+
+      loopGeometry.set(e.id, {
+        direction: `${manual.direction ?? defaultDirection}deg`,
+        sweep: `${manual.sweep ?? defaultSweep}deg`,
+        step: manual.step ?? defaultStep,
+        labelX: manual.labelX ?? 0,
+        labelY: manual.labelY ?? -7 - 3 * i,
+      });
     });
   });
 
   G.edges.forEach(e => {
-    const np = e.n_pairs;
-    const ni = Math.round(np) === np ? Math.round(np) : np.toFixed(2);
-    elements.push({
-      data: {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        // Native Cytoscape labels stay plain/export-safe.
-        // Optional e.rate_symbol_latex is used only for KaTeX-rendered sidebar math.
-        label: edgeGraphLabel(e),
-        color: e.color,
-      },
-    });
+    const loop = loopGeometry.get(e.id);
+
+    // Manual geometry for a non-self edge. Values in the JSON take precedence
+    // over EDGE_OVERRIDES so an exporter can fully control the drawing.
+    const override = EDGE_OVERRIDES[e.id] || {};
+    const distances = numberList(
+      e.control_point_distances ?? e.control_point_distance ?? override.distances ?? override.distance
+    );
+    const weights = numberList(
+      e.control_point_weights ?? e.control_point_weight ?? override.weights ?? override.weight
+    );
+    const requestedStyle = e.curve_style ?? override.curveStyle ?? override.style;
+    const hasManualCurve = !loop && Boolean(distances || weights || requestedStyle);
+    const curveStyle = hasManualCurve
+      ? (requestedStyle || 'unbundled-bezier')
+      : 'straight';
+    let edgeClasses = '';
+    const initialWeights = weights ? weights.split(/\s+/).map(Number).filter(Number.isFinite) : [];
+    const initialDistances = distances ? distances.split(/\s+/).map(Number).filter(Number.isFinite) : [];
+    if (!loop && curveStyle === 'unbundled-bezier' && (hasManualCurve || initialWeights.length || initialDistances.length)) edgeClasses = 'edgecontrolediting-hascontrolpoints';
+
+    const edgeData = {
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      // Native Cytoscape labels stay plain/export-safe.
+      // Optional e.rate_symbol_latex is used only for KaTeX-rendered sidebar math.
+      label: edgeGraphLabel(e),
+      color: e.color,
+      isLoop: Boolean(loop),
+      hasManualCurve,
+      curveStyle,
+      controlPointDistances: distances || '0',
+      controlPointWeights: weights || '0.5',
+      edgeLabelX: finiteNumber(e.edge_label_x ?? override.labelX, 0),
+      edgeLabelY: finiteNumber(e.edge_label_y ?? override.labelY, 0),
+      sourceDistance: finiteNumber(e.source_distance ?? override.sourceDistance, 0),
+      targetDistance: finiteNumber(e.target_distance ?? override.targetDistance, 0),
+      loopDirection: loop?.direction || '-90deg',
+      loopSweep: loop?.sweep || '60deg',
+      loopStep: loop?.step || 42,
+      loopLabelX: loop?.labelX || 0,
+      loopLabelY: loop?.labelY || -7,
+      cyedgecontroleditingWeights: initialWeights,
+      cyedgecontroleditingDistances: initialDistances,
+    };
+    edgeDefaults[e.id] = JSON.parse(JSON.stringify(edgeData));
+    elements.push({ data: edgeData, classes: edgeClasses });
   });
 
   if (cy) cy.destroy();
@@ -682,7 +1217,7 @@ function load(data) {
         selector: 'edge',
         style: {
           'label':               'data(label)',
-          'curve-style':         'bezier',
+          'curve-style':         'straight',
           'target-arrow-shape':  'triangle',
           'target-arrow-color':  'data(color)',
           'line-color':          'data(color)',
@@ -698,6 +1233,32 @@ function load(data) {
         },
       },
       {
+        selector: 'edge[hasManualCurve]',
+        style: {
+          'curve-style':                 'data(curveStyle)',
+          'control-point-distances':     'data(controlPointDistances)',
+          'control-point-weights':       'data(controlPointWeights)',
+          'text-margin-x':               'data(edgeLabelX)',
+          'text-margin-y':               'data(edgeLabelY)',
+          'source-distance-from-node':   'data(sourceDistance)',
+          'target-distance-from-node':   'data(targetDistance)',
+        },
+      },
+      {
+        selector: 'edge[isLoop]',
+        style: {
+          'curve-style':             'bezier',
+          'loop-direction':          'data(loopDirection)',
+          'loop-sweep':              'data(loopSweep)',
+          'control-point-step-size': 'data(loopStep)',
+          'text-rotation':           'none',
+          'text-margin-x':           'data(loopLabelX)',
+          'text-margin-y':           'data(loopLabelY)',
+          'source-distance-from-node': 4,
+          'target-distance-from-node': 7,
+        },
+      },
+      {
         selector: 'edge:selected',
         style: { 'width': 2.5 },
       },
@@ -710,9 +1271,27 @@ function load(data) {
     maxZoom: 12,
   });
 
+  // Interactive anchor editing is intentionally not initialized here.
+  // cytoscape-edge-editing@5 keeps global initialization state and can crash
+  // when this viewer rebuilds the Cytoscape instance after a layout or tile
+  // change. The numeric edge editor remains available and stable.
+  edgeEditingInstance = null;
+
+
   cy.on('tap', 'node', evt => {
     const n = NM[evt.target.id()];
     if (n) showNode(n);
+  });
+
+  cy.on('tap', 'edge', evt => {
+    populateEdgeEditor(evt.target);
+  });
+
+  cy.on('cyedgeediting.changeAnchorPoints', 'edge', evt => {
+    if (selectedEdgeId && evt.target.id() === selectedEdgeId) {
+      populateEdgeEditor(evt.target);
+      setEdgeEditorStatus('Anchor points updated.');
+    }
   });
 
   // Deselect / clear panel when tapping the background.
@@ -728,6 +1307,7 @@ function load(data) {
 
   cy.fit(undefined, 50);
   setExportEnabled(true);
+  clearEdgeEditor();
 }
 
 // ── node detail sidebar ────────────────────────────────────────────────────────
@@ -781,7 +1361,247 @@ function showNode(n) {
   }
 }
 
-// ── file input ─────────────────────────────────────────────────────────────────
+
+function edgeStyleDataFromElement(edgeEl) {
+  const d = edgeEl.data();
+  return {
+    hasManualCurve: Boolean(d.hasManualCurve),
+    curveStyle: d.curveStyle ?? 'bezier',
+    controlPointDistances: d.controlPointDistances ?? '0',
+    controlPointWeights: d.controlPointWeights ?? '0.5',
+    edgeLabelX: finiteNumber(d.edgeLabelX, 0),
+    edgeLabelY: finiteNumber(d.edgeLabelY, 0),
+    sourceDistance: finiteNumber(d.sourceDistance, 0),
+    targetDistance: finiteNumber(d.targetDistance, 0),
+    loopDirection: d.loopDirection ?? '-90deg',
+    loopSweep: d.loopSweep ?? '60deg',
+    loopStep: finiteNumber(d.loopStep, 42),
+    loopLabelX: finiteNumber(d.loopLabelX, 0),
+    loopLabelY: finiteNumber(d.loopLabelY, -7),
+    isLoop: Boolean(d.isLoop),
+  };
+}
+
+function setEdgeEditorStatus(msg) {
+  const el = document.getElementById('edge-editor-status');
+  if (el) el.textContent = msg || '';
+}
+
+function clearEdgeEditor() {
+  selectedEdgeId = null;
+  document.getElementById('edge-editor-empty').classList.remove('hidden');
+  document.getElementById('edge-editor-form').classList.add('hidden');
+  const block = document.getElementById('edge-interactive-block');
+  if (block) block.classList.remove('hidden');
+  const preview = document.getElementById('edge-json-preview');
+  if (preview) preview.value = JSON.stringify(getAllEdgePatches(), null, 2);
+  setEdgeEditorStatus('');
+}
+
+function populateEdgeEditor(edgeEl) {
+  if (!edgeEl || edgeEl.empty()) return;
+  const d = edgeEl.data();
+  selectedEdgeId = edgeEl.id();
+
+  document.getElementById('edge-editor-empty').classList.add('hidden');
+  document.getElementById('edge-editor-form').classList.remove('hidden');
+  document.getElementById('edge-editor-title').textContent = `${d.id}: ${d.source} → ${d.target}`;
+  document.getElementById('edge-editor-sub').textContent = d.isLoop
+    ? 'Self-transition. Adjust the loop orientation, spread, and label offset.'
+    : 'Edge transition. Adjust the Bézier geometry, endpoint offsets, and label position.';
+
+  const nonLoop = document.getElementById('edge-nonloop-fields');
+  const loop = document.getElementById('edge-loop-fields');
+  const curveRow = document.getElementById('edge-curve-style-row');
+  setInteractiveButtonState(edgeEl);
+
+  if (d.isLoop) {
+    nonLoop.classList.add('hidden');
+    loop.classList.remove('hidden');
+    curveRow.classList.add('hidden');
+    document.getElementById('loop-direction').value = stripDeg(d.loopDirection, -90);
+    document.getElementById('loop-sweep').value = stripDeg(d.loopSweep, 60);
+    document.getElementById('loop-step').value = finiteNumber(d.loopStep, 42);
+    document.getElementById('loop-label-x').value = finiteNumber(d.loopLabelX, 0);
+    document.getElementById('loop-label-y').value = finiteNumber(d.loopLabelY, -7);
+  } else {
+    nonLoop.classList.remove('hidden');
+    loop.classList.add('hidden');
+    curveRow.classList.remove('hidden');
+    const liveCurveStyle = hasInteractiveControlPoints(edgeEl) ? 'unbundled-bezier' : (d.curveStyle || 'straight');
+    const liveDistances = hasInteractiveControlPoints(edgeEl) ? numberList(interactiveDistances(edgeEl)) : (d.controlPointDistances || '');
+    const liveWeights = hasInteractiveControlPoints(edgeEl) ? numberList(interactiveWeights(edgeEl)) : (d.controlPointWeights || '');
+    document.getElementById('edge-curve-style').value = liveCurveStyle || 'straight';
+    document.getElementById('edge-distances').value = liveDistances === '0' && !d.hasManualCurve ? '' : liveDistances;
+    document.getElementById('edge-weights').value = liveWeights === '0.5' && !d.hasManualCurve ? '' : liveWeights;
+    document.getElementById('edge-label-x').value = finiteNumber(d.edgeLabelX, 0);
+    document.getElementById('edge-label-y').value = finiteNumber(d.edgeLabelY, 0);
+    document.getElementById('edge-source-distance').value = finiteNumber(d.sourceDistance, 0);
+    document.getElementById('edge-target-distance').value = finiteNumber(d.targetDistance, 0);
+  }
+  updateEdgeJsonPreview();
+  setEdgeEditorStatus('');
+}
+
+function applyEditorToSelectedEdge() {
+  if (!cy || !selectedEdgeId) return;
+  const edge = cy.getElementById(selectedEdgeId);
+  if (!edge || edge.empty()) return;
+  const d = edge.data();
+
+  if (d.isLoop) {
+    const direction = parseNumInput(document.getElementById('loop-direction').value, -90);
+    const sweep = parseNumInput(document.getElementById('loop-sweep').value, 60);
+    const step = parseNumInput(document.getElementById('loop-step').value, 42);
+    const labelX = parseNumInput(document.getElementById('loop-label-x').value, 0);
+    const labelY = parseNumInput(document.getElementById('loop-label-y').value, -7);
+    edge.data({
+      loopDirection: `${direction}deg`,
+      loopSweep: `${sweep}deg`,
+      loopStep: step,
+      loopLabelX: labelX,
+      loopLabelY: labelY,
+    });
+  } else {
+    const curveStyle = document.getElementById('edge-curve-style').value || 'bezier';
+    const distances = numberList(document.getElementById('edge-distances').value);
+    const weights = numberList(document.getElementById('edge-weights').value);
+    const labelX = parseNumInput(document.getElementById('edge-label-x').value, 0);
+    const labelY = parseNumInput(document.getElementById('edge-label-y').value, 0);
+    const sourceDistance = parseNumInput(document.getElementById('edge-source-distance').value, 0);
+    const targetDistance = parseNumInput(document.getElementById('edge-target-distance').value, 0);
+    const hasManual = Boolean(distances || weights || curveStyle !== 'bezier' || labelX || labelY || sourceDistance || targetDistance);
+    edge.data({
+      hasManualCurve: hasManual,
+      curveStyle: hasManual ? curveStyle : 'straight',
+      controlPointDistances: distances || '0',
+      controlPointWeights: weights || '0.5',
+      edgeLabelX: labelX,
+      edgeLabelY: labelY,
+      sourceDistance,
+      targetDistance,
+    });
+    if (curveStyle === 'unbundled-bezier' || distances || weights) {
+      edge.addClass('edgecontrolediting-hascontrolpoints');
+      edge.data('cyedgecontroleditingDistances', (distances ? distances.split(/\s+/).map(Number).filter(Number.isFinite) : []));
+      edge.data('cyedgecontroleditingWeights', (weights ? weights.split(/\s+/).map(Number).filter(Number.isFinite) : []));
+      if (edgeEditingInstance?.initAnchorPoints) edgeEditingInstance.initAnchorPoints(edge);
+    } else if (!hasManual) {
+      edge.removeClass('edgecontrolediting-hascontrolpoints edgecontrolediting-hasmultiplecontrolpoints');
+      edge.data('cyedgecontroleditingDistances', []);
+      edge.data('cyedgecontroleditingWeights', []);
+    }
+  }
+
+  populateEdgeEditor(edge);
+  setEdgeEditorStatus('Edge geometry updated.');
+}
+
+function resetSelectedEdge() {
+  if (!cy || !selectedEdgeId || !edgeDefaults[selectedEdgeId]) return;
+  const edge = cy.getElementById(selectedEdgeId);
+  if (!edge || edge.empty()) return;
+  edge.data(edgeDefaults[selectedEdgeId]);
+  populateEdgeEditor(edge);
+  setEdgeEditorStatus('Edge reset to its loaded/default geometry.');
+}
+
+function getEdgePatch(edgeId) {
+  if (!cy || !edgeDefaults[edgeId]) return null;
+  const edge = cy.getElementById(edgeId);
+  if (!edge || edge.empty()) return null;
+  const d = edge.data();
+  const def = edgeDefaults[edgeId];
+  const patch = { id: edgeId };
+
+  if (d.isLoop) {
+    const dir = stripDeg(d.loopDirection, -90);
+    const defDir = stripDeg(def.loopDirection, -90);
+    const sw = stripDeg(d.loopSweep, 60);
+    const defSw = stripDeg(def.loopSweep, 60);
+    if (!compareNum(dir, defDir)) patch.loop_direction = dir;
+    if (!compareNum(sw, defSw)) patch.loop_sweep = sw;
+    if (!compareNum(d.loopStep, def.loopStep)) patch.loop_step = finiteNumber(d.loopStep, def.loopStep);
+    if (!compareNum(d.loopLabelX, def.loopLabelX)) patch.loop_label_x = finiteNumber(d.loopLabelX, def.loopLabelX);
+    if (!compareNum(d.loopLabelY, def.loopLabelY)) patch.loop_label_y = finiteNumber(d.loopLabelY, def.loopLabelY);
+  } else {
+    const interactive = hasInteractiveControlPoints(edge);
+    const dist = interactive ? numberList(interactiveDistances(edge)) : numberList(d.controlPointDistances);
+    const wt = interactive ? numberList(interactiveWeights(edge)) : numberList(d.controlPointWeights);
+    const defInteractive = Boolean(def.cyedgecontroleditingWeights && def.cyedgecontroleditingWeights.length);
+    const defDist = defInteractive ? numberList(def.cyedgecontroleditingDistances) : numberList(def.controlPointDistances);
+    const defWt = defInteractive ? numberList(def.cyedgecontroleditingWeights) : numberList(def.controlPointWeights);
+    const liveStyle = interactive ? 'unbundled-bezier' : (d.curveStyle || 'straight');
+    const defStyle = defInteractive ? 'unbundled-bezier' : (def.curveStyle || 'straight');
+
+    if (liveStyle !== defStyle) patch.curve_style = liveStyle;
+    if (dist !== defDist) patch.control_point_distances = listStringToValue(dist);
+    if (wt !== defWt) patch.control_point_weights = listStringToValue(wt);
+    if (!compareNum(d.edgeLabelX, def.edgeLabelX)) patch.edge_label_x = finiteNumber(d.edgeLabelX, def.edgeLabelX);
+    if (!compareNum(d.edgeLabelY, def.edgeLabelY)) patch.edge_label_y = finiteNumber(d.edgeLabelY, def.edgeLabelY);
+    if (!compareNum(d.sourceDistance, def.sourceDistance)) patch.source_distance = finiteNumber(d.sourceDistance, def.sourceDistance);
+    if (!compareNum(d.targetDistance, def.targetDistance)) patch.target_distance = finiteNumber(d.targetDistance, def.targetDistance);
+  }
+
+  return Object.keys(patch).length > 1 ? patch : null;
+}
+
+function getAllEdgePatches() {
+  if (!cy) return [];
+  return cy.edges().map(e => getEdgePatch(e.id())).filter(Boolean);
+}
+
+function updateEdgeJsonPreview() {
+  const preview = document.getElementById('edge-json-preview');
+  if (!preview) return;
+  const payload = selectedEdgeId ? (getEdgePatch(selectedEdgeId) || { id: selectedEdgeId }) : getAllEdgePatches();
+  preview.value = JSON.stringify(payload, null, 2);
+}
+
+function applyGraphLayoutToCurrentCy(mode) {
+  if (!G || !cy) return;
+  try {
+    const firstNode = cy.nodes()[0];
+    const nodeW = firstNode ? Number(firstNode.style('width').replace('px', '')) || 80 : 80;
+    const nodeH = firstNode ? Number(firstNode.style('height').replace('px', '')) || 50 : 50;
+    const layout = buildGraphLayoutPositions(mode, G.nodes, G.meta, nodeW, nodeH);
+
+    let ps = 1.0;
+    if (mode === 'exported') {
+      const vals = Object.values(layout.scalePositions);
+      const gx = minGap(vals.map(p => p.x));
+      const gy = minGap(vals.map(p => p.y));
+      const sx = Number.isFinite(gx) && gx > 0 && gx < nodeW + 12 ? (nodeW + 12) / gx : 1.0;
+      const sy = Number.isFinite(gy) && gy > 0 && gy < nodeH + 12 ? (nodeH + 12) / gy : 1.0;
+      ps = Math.max(1.0, sx, sy);
+    }
+
+    basePositions = {};
+    cy.batch(() => {
+      cy.nodes().forEach(node => {
+        const p = layout.positions[node.id()];
+        if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+          throw new Error(`Invalid position for node ${node.id()}`);
+        }
+        basePositions[node.id()] = { x: p.x * ps, y: p.y * ps };
+        node.position({ x: p.x * ps * cySpread, y: p.y * ps * cySpread });
+      });
+    });
+    cy.resize();
+    cy.fit(undefined, 50);
+
+    document.getElementById('meta').textContent =
+      `${G.meta.n_classes} states · ${G.edges.length} transitions · ${G.meta.n_states} microstates · ${shapeName(document.getElementById('shape-select')?.value || 'brick-strip')} · ${graphLayoutName(mode)}` +
+      (G.meta.uniform ? '' : ' · ⚠ non-uniform');
+  } catch (err) {
+    console.error('Graph layout switch failed.', err);
+    const warn = document.getElementById('warn');
+    warn.style.display = 'block';
+    warn.textContent = `Graph layout failed: ${err.message}`;
+  }
+}
+
+// ── file input// ── file input ─────────────────────────────────────────────────────────────────
 document.getElementById('load-btn').addEventListener('click', () => {
   document.getElementById('fi').click();
 });
@@ -803,6 +1623,13 @@ const shapeSelect = document.getElementById('shape-select');
 if (shapeSelect) {
   shapeSelect.addEventListener('change', () => { if (G) load(G); });
 }
+const graphLayoutSelect = document.getElementById('graph-layout-select');
+if (graphLayoutSelect) {
+  graphLayoutSelect.addEventListener('change', () => {
+    updateGraphLayoutHelp();
+    if (G && cy) applyGraphLayoutToCurrentCy(graphLayoutSelect.value);
+  });
+}
 const repeatCount = document.getElementById('repeat-count');
 if (repeatCount) {
   repeatCount.addEventListener('change', () => { if (G) load(G); });
@@ -817,6 +1644,58 @@ if (exportPdfBtn) exportPdfBtn.addEventListener('click', exportPdf);
   if (el) el.addEventListener('change', () => updateExportStatus());
 });
 
+const edgeMakeStraightBtn = document.getElementById('edge-make-straight-btn');
+if (edgeMakeStraightBtn) edgeMakeStraightBtn.addEventListener('click', () => {
+  if (!cy || !selectedEdgeId) return;
+  const edge = cy.getElementById(selectedEdgeId);
+  if (!edge || edge.empty()) return;
+  applyStraightMode(edge);
+  populateEdgeEditor(edge);
+  setEdgeEditorStatus('Selected edge is now straight.');
+});
+const edgeMakeSmoothBtn = document.getElementById('edge-make-smooth-btn');
+if (edgeMakeSmoothBtn) edgeMakeSmoothBtn.addEventListener('click', () => {
+  if (!cy || !selectedEdgeId) return;
+  const edge = cy.getElementById(selectedEdgeId);
+  if (!edge || edge.empty()) return;
+  applySmoothMode(edge);
+  populateEdgeEditor(edge);
+  setEdgeEditorStatus('Smooth editing enabled. Drag on the selected edge or right-click to add control points.');
+});
+
+const edgeApplyBtn = document.getElementById('edge-apply-btn');
+if (edgeApplyBtn) edgeApplyBtn.addEventListener('click', applyEditorToSelectedEdge);
+const edgeResetBtn = document.getElementById('edge-reset-btn');
+if (edgeResetBtn) edgeResetBtn.addEventListener('click', resetSelectedEdge);
+const edgeCopyBtn = document.getElementById('edge-copy-btn');
+if (edgeCopyBtn) edgeCopyBtn.addEventListener('click', async () => {
+  try {
+    const payload = selectedEdgeId ? (getEdgePatch(selectedEdgeId) || { id: selectedEdgeId }) : {};
+    await copyText(JSON.stringify(payload, null, 2));
+    setEdgeEditorStatus('Selected edge JSON copied to clipboard.');
+  } catch (err) {
+    console.error(err);
+    setEdgeEditorStatus('Could not copy selected edge JSON.');
+  }
+});
+const edgeCopyAllBtn = document.getElementById('edge-copy-all-btn');
+if (edgeCopyAllBtn) edgeCopyAllBtn.addEventListener('click', async () => {
+  try {
+    const payload = getAllEdgePatches();
+    await copyText(JSON.stringify(payload, null, 2));
+    updateEdgeJsonPreview();
+    setEdgeEditorStatus('All edge edits copied to clipboard.');
+  } catch (err) {
+    console.error(err);
+    setEdgeEditorStatus('Could not copy all edge edits.');
+  }
+});
+['edge-curve-style','edge-distances','edge-weights','edge-label-x','edge-label-y','edge-source-distance','edge-target-distance','loop-direction','loop-sweep','loop-step','loop-label-x','loop-label-y'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', () => updateEdgeJsonPreview());
+});
+
+updateGraphLayoutHelp();
 setExportEnabled(false);
 
 // Font-size slider: live-updates node and edge label sizes without reload.
