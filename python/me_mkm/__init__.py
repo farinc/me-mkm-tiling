@@ -33,6 +33,7 @@ from me_mkm.tile import (
     solve_steady_state,
     solve_steady_state_components,
     steady_state_derivative,
+    tile_microstates,
     to_steady_state_derivative_form,
     to_steady_state_form,
 )

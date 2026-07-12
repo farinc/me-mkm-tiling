@@ -241,6 +241,14 @@ class TileSettings:
         """
     @staticmethod
     def custom(sites: builtins.int, deltas: typing.Sequence[builtins.int]) -> TileSettings: ...
+    @staticmethod
+    def smallest_valid_square(sites: builtins.int, checkerboard: builtins.bool) -> typing.Optional[TileSettings]:
+        r"""
+        Smallest brickwork offset d (searched from d=1 up) for a ring of
+        `sites` sites that is fully valid per Tile::validate: rule1, rule2,
+        AND checkerboard-capable (Adams et al. 2025 SI Figure S3) if requested.
+        Returns None if no such d exists for this l (e.g. sites odd, or sites=4).
+        """
     def l(self) -> builtins.int:
         r"""
         The number of sites in the tile (ring length). Same as sites.
@@ -253,15 +261,13 @@ class TileSettings:
 
 def decode_state(microstate: builtins.int, l: builtins.int, base: builtins.int) -> builtins.list[builtins.int]:
     r"""
-    Given a state vector for a tile of `l` sites, you can encode it into a microstate "number" given the known base (number of species).
+    Given a microstate "number", you can decode it given the known base and tile length.
     """
 
 def encode_state(microstate: typing.Sequence[builtins.int], base: builtins.int) -> builtins.int:
     r"""
-    Given a microstate "number", you can decode it given the known base and tile length.
-    Usually, you want to use the coverage_classes() or select_states() methods to get
-    a list of microstates that match a coverage signature, rather than decoding every
-    state yourself.
+    Given a state vector for a tile of `l` sites, you can encode it into a
+    microstate "number" given the known base (number of species).
     """
 
 def state_counts(idx: builtins.int, l: builtins.int, base: builtins.int) -> builtins.list[builtins.int]: ...

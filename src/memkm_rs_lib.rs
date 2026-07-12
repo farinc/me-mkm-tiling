@@ -15,12 +15,19 @@ fn decode(mut microstate: usize, l: usize, base: usize) -> Vec<u8> {
 fn encode(state: &[u8], base: usize) -> usize {
     state.iter().fold(0usize, |acc, &d| acc * base + d as usize)
 }
-
-/// Given a state vector for a tile of `l` sites, you can encode it into a microstate "number" given the known base (number of species).
+/// Given a microstate "number", you can decode it given the known base and tile length.
 #[gen_stub_pyfunction]
 #[pyfunction]
 fn decode_state(microstate: usize, l: usize, base: usize) -> Vec<u8> {
     decode(microstate, l, base)
+}
+
+/// Given a state vector for a tile of `l` sites, you can encode it into a
+/// microstate "number" given the known base (number of species).
+#[gen_stub_pyfunction]
+#[pyfunction]
+fn encode_state(microstate: Vec<u8>, base: usize) -> usize {
+    encode(&microstate, base)
 }
 
 #[inline]
@@ -30,16 +37,6 @@ fn count_species(state: &[u8], base: usize) -> Vec<usize> {
         counts[s as usize] += 1;
     }
     counts
-}
-
-/// Given a microstate "number", you can decode it given the known base and tile length.
-/// Usually, you want to use the coverage_classes() or select_states() methods to get
-/// a list of microstates that match a coverage signature, rather than decoding every
-/// state yourself.
-#[gen_stub_pyfunction]
-#[pyfunction]
-fn encode_state(microstate: Vec<u8>, base: usize) -> usize {
-    encode(&microstate, base)
 }
 
 // Counts the number of species in a decoded microstate (given as a vector)
@@ -339,6 +336,20 @@ impl TileSettings {
         Self::new(sites, deltas)
     }
 
+    #[staticmethod]
+    /// Smallest brickwork offset d (searched from d=1 up) for a ring of
+    /// `sites` sites that is fully valid per Tile::validate: rule1, rule2,
+    /// AND checkerboard-capable (Adams et al. 2025 SI Figure S3) if requested.
+    /// Returns None if no such d exists for this l (e.g. sites odd, or sites=4).
+    pub fn smallest_valid_square(sites: usize, checkerboard: bool) -> Option<Self> {
+        (1..sites)
+            .find(|&d| {
+                let (rule1, rule2, chkbrd) = Tile::validate(sites, d);
+                rule1 && rule2 && chkbrd == checkerboard
+            })
+            .map(|d| Self::square(sites, d))
+    }
+
     /// The number of sites in the tile (ring length). Same as sites.
     pub fn l(&self) -> usize {
         self.sites
@@ -413,17 +424,19 @@ impl Tile {
     /// This is purely a geometric sanity check on the (ring length, offset)
     /// pair, independent of whatever reactions get attached later:
     /// - rule1: d=0 or d=l would make a site its own periodic neighbor.
-    /// - rule2: catches offsets that double-count a bond; d=1 is already
-    ///   covered by the brickwork's nearest-neighbor offset, d=l-1 is just
-    ///   d=1 read the other way around the ring, and d=l/2 (even l) is its
-    ///   own mirror image (i+d and i-d land on the same site).
-    /// - checkerboard: whether this (l, d) can host a strict alternating
-    ///   2-coloring at all (needs l even and d odd, so stepping by d always
-    ///   flips parity).
+    /// - rule2: a valid square-lattice fold needs l even and d odd, so
+    ///   stepping by d always flips parity.
+    /// - checkerboard: whether this (l, d) can additionally host a strict
+    ///   alternating 2-coloring. This is stricter than rule2: d=1 is just
+    ///   the brickwork's nearest-neighbor offset and adds no new bond
+    ///   type, d=l-1 is d=1 read the other way around the ring, and
+    ///   d=l/2 (even l) is its own mirror image (i+d and i-d land on the
+    ///   same site) -- all three are valid square-lattice tiles (rule1 and
+    ///   rule2 pass) but cannot represent the checkerboard superlattice.
     fn validate(l: usize, d: usize) -> (bool, bool, bool) {
         let rule1 = d != 0 && d != l;
-        let rule2 = d != 1 && (l % 2 != 0 || d != l / 2) && d != l - 1;
-        let checkerboard = l % 2 == 0 && d % 2 == 1;
+        let rule2 = l % 2 == 0 && d % 2 == 1;
+        let checkerboard = rule1 && rule2 && d != 1 && d != l - 1 && d != l / 2;
         (rule1, rule2, checkerboard)
     }
 }
@@ -573,7 +586,7 @@ impl MEMKMBuilder {
             if !r1 {
                 "Violates rule 1: site abuts its own periodic image"
             } else if !r2 {
-                "Violates rule 2: some neighbors counted multiple times"
+                "Violates rule 2: needs l even and d odd for a valid square-lattice fold"
             } else if !cb {
                 "Valid Tile but cannot represent checkerboard superlattice"
             } else {

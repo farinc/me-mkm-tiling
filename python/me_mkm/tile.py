@@ -1,7 +1,7 @@
 """
 W components: W (the transition-rate matrix) is linear in each reaction's
 bare rate constant. build_W_components / build_dW_dbeta_components ask Rust
-for each reaction's contribution. This allows building W 
+for each reaction's contribution. This allows building W
 rates, dW/dbeta, dW/dlnC, steady-state forms, derivative forms -- is then
 just a weighted sum of those fixed sparse components computed in Python, with
 no further calls back into Rust. That's what makes rate sweeps, dynamic
@@ -23,8 +23,8 @@ from me_mkm._me_mkm import (
 def build_W(builder: MEMKMBuilder, steady_state: bool = True) -> sp.csc_array:
     """
     Build the ME-MKM transition matrix as a scipy sparse array. If steady-state is True,
-    the last row is overwritten with the normalisation condition, providing the reduced 
-    transition matrix for solving the steady-state distribution. If steady_state is False, 
+    the last row is overwritten with the normalisation condition, providing the reduced
+    transition matrix for solving the steady-state distribution. If steady_state is False,
     the full transition matrix is returned for debugging purposes.
     """
     rows, cols, vals = (
@@ -164,7 +164,7 @@ def ergodic_structure(W: sp.csc_array) -> dict:
                             covering all n states (no transient states)
       'n_classes'         : number of absorbing classes
     """
-    n_comp, labels = connected_components(W, directed=True, connection='strong')
+    n_comp, labels = connected_components(W, directed=True, connection="strong")
 
     # Component c has an outgoing edge if W[i,j] != 0 with labels[j]==c, labels[i]!=c
     # (W[i,j] > 0 means transition j→i, so j's SCC sends probability to i's SCC).
@@ -174,22 +174,27 @@ def ergodic_structure(W: sp.csc_array) -> dict:
         if labels[i] != labels[j]:
             has_outgoing.add(labels[j])
 
-    absorbing = [np.where(labels == c)[0]
-                 for c in range(n_comp) if c not in has_outgoing]
+    absorbing = [
+        np.where(labels == c)[0] for c in range(n_comp) if c not in has_outgoing
+    ]
     absorbing_flat = np.concatenate(absorbing) if absorbing else np.array([], int)
-    transient = np.array([s for s in range(W.shape[0])
-                          if s not in set(absorbing_flat.tolist())], dtype=int)
+    transient = np.array(
+        [s for s in range(W.shape[0]) if s not in set(absorbing_flat.tolist())],
+        dtype=int,
+    )
     is_ergodic = len(absorbing) == 1 and len(transient) == 0
 
     return {
-        'absorbing_classes': absorbing,
-        'transient_states':  transient,
-        'is_ergodic':        is_ergodic,
-        'n_classes':         len(absorbing),
+        "absorbing_classes": absorbing,
+        "transient_states": transient,
+        "is_ergodic": is_ergodic,
+        "n_classes": len(absorbing),
     }
 
 
-def solve_steady_state_components(W: sp.csc_array, theta0: np.ndarray, struct: dict = None):
+def solve_steady_state_components(
+    W: sp.csc_array, theta0: np.ndarray, struct: dict = None
+):
     """
     Steady-state distribution for W, handling non-ergodic systems.
 
@@ -207,10 +212,10 @@ def solve_steady_state_components(W: sp.csc_array, theta0: np.ndarray, struct: d
     if struct is None:
         struct = ergodic_structure(W)
 
-    if struct['is_ergodic']:
+    if struct["is_ergodic"]:
         return solve_steady_state(to_steady_state_form(W))
 
-    classes = struct['absorbing_classes']
+    classes = struct["absorbing_classes"]
     weights = np.array([theta0[idx].sum() for idx in classes])
     total = weights.sum()
     if total <= 0:
@@ -252,9 +257,8 @@ def restrict_to_ergodic_core(components: list, struct: dict):
         Theta_full[core_idx] = sol.y
         coverages(builder, Theta_full, species_names)
     """
-    core_idx = np.sort(np.concatenate(struct['absorbing_classes']))
-    restricted = [sp.csc_array(comp[np.ix_(core_idx, core_idx)])
-                  for comp in components]
+    core_idx = np.sort(np.concatenate(struct["absorbing_classes"]))
+    restricted = [sp.csc_array(comp[np.ix_(core_idx, core_idx)]) for comp in components]
     return restricted, core_idx
 
 
@@ -274,10 +278,10 @@ def check_ergodicity(builder) -> dict:
     W = build_W(builder, steady_state=False)
     struct = ergodic_structure(W)
     n_states = W.shape[0]
-    n_trans  = len(struct['transient_states'])
-    sizes    = [len(c) for c in struct['absorbing_classes']]
+    n_trans = len(struct["transient_states"])
+    sizes = [len(c) for c in struct["absorbing_classes"]]
 
-    if struct['is_ergodic']:
+    if struct["is_ergodic"]:
         msg = f"Ergodic: single absorbing class covering all {n_states} states."
     else:
         msg = (
@@ -286,7 +290,7 @@ def check_ergodicity(builder) -> dict:
             "Consider adding diffusion steps or call restrict_to_ergodic_core()."
         )
 
-    return {**struct, 'message': msg}
+    return {**struct, "message": msg}
 
 
 def solve_steady_state(Wbar: sp.csc_array):
@@ -340,7 +344,9 @@ def production_rate_vector(builder: MEMKMBuilder, stoich: dict) -> np.ndarray:
     return r_P
 
 
-def production_rate_dbeta_vector(builder: MEMKMBuilder, stoich: dict, dk_dbeta: dict) -> np.ndarray:
+def production_rate_dbeta_vector(
+    builder: MEMKMBuilder, stoich: dict, dk_dbeta: dict
+) -> np.ndarray:
     """d(r_P[state])/dbeta (paper eq. 6's per-state rate term), product rule analog of assemble_dW_dbeta."""
     n = builder.n_states
     components = build_W_components(builder)
@@ -356,7 +362,9 @@ def production_rate_dbeta_vector(builder: MEMKMBuilder, stoich: dict, dk_dbeta: 
     return dr_P
 
 
-def production_rate_dlnC_vector(builder: MEMKMBuilder, stoich: dict, conc_reaction_names: set) -> np.ndarray:
+def production_rate_dlnC_vector(
+    builder: MEMKMBuilder, stoich: dict, conc_reaction_names: set
+) -> np.ndarray:
     """d(r_P[state])/d(ln C) (paper eq. 6's per-state rate term), restricted to mass-action steps in conc_reaction_names."""
     n = builder.n_states
     components = build_W_components(builder)
@@ -392,7 +400,9 @@ def production_rate_derivative(
     return float(dTheta_dx @ r_P + Theta_ss @ dr_P_dx_vector) / builder.l
 
 
-def coverage_ic(builder: MEMKMBuilder, theta: dict, species_names: list = None) -> np.ndarray:
+def coverage_ic(
+    builder: MEMKMBuilder, theta: dict, species_names: list = None
+) -> np.ndarray:
     """
     Maximum-entropy microstate distribution with prescribed marginal coverages.
 
@@ -412,7 +422,7 @@ def coverage_ic(builder: MEMKMBuilder, theta: dict, species_names: list = None) 
         builder.species_names (index 0 first).
     """
     base = builder.n_species
-    l    = builder.l
+    l = builder.l
     names = species_names or list(builder.species_names)
     name_to_code = {name: i for i, name in enumerate(names)}
 
@@ -460,3 +470,35 @@ def coverages(builder: MEMKMBuilder, Theta, species_names: list = None) -> dict:
             thetas[s] += Theta[oi] * state.count(s)
     thetas /= builder.l
     return {names[s]: thetas[s] for s in range(base)}
+
+
+def tile_microstates(builder: MEMKMBuilder, Theta) -> np.ndarray:
+    """
+    Recover every microstate's site vector, index-aligned with a solved
+    distribution.
+
+    Theta : array, shape (n,) or (n, n_t)
+        Probability mass for each state index (steady-state) or over time
+        (dynamic, e.g. solve_ivp's sol.y). Only used here to check that its
+        state axis (axis 0) matches builder.n_states -- decoding a microstate
+        into its l-site vector depends solely on the index, builder.l, and
+        builder.n_species, so the returned array is identical whether Theta
+        is a steady-state distribution or a dynamic time series. Index it
+        with Theta the same way either way: states[oi] <-> Theta[oi] (or
+        Theta[oi, :]).
+
+    Returns an (n_states, l) int array; row oi is the site vector for
+    microstate oi.
+    """
+    Theta = np.asarray(Theta)
+    if Theta.shape[0] != builder.n_states:
+        raise ValueError(
+            f"Theta has {Theta.shape[0]} states along axis 0, expected {builder.n_states}"
+        )
+    base = builder.n_species
+    # decode_state returns bytes (pyo3's mapping for Vec<u8>), so each row
+    # must be unpacked with list() before np.array can build an int array.
+    return np.array(
+        [list(decode_state(oi, builder.l, base)) for oi in range(builder.n_states)],
+        dtype=int,
+    )

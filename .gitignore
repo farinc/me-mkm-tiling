@@ -79,3 +79,6 @@ pdfs/
 # Rust stub generator lives there and must be tracked.
 !src/bin/
 !src/bin/*.rs
+
+# Graphify
+graphify-out/

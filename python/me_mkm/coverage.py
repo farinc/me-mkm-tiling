@@ -12,7 +12,7 @@ import math
 
 import numpy as np
 
-from me_mkm._me_mkm import MEMKMBuilder, state_counts  # noqa: F401
+from me_mkm._me_mkm import MEMKMBuilder, decode_state, state_counts  # noqa: F401
 
 # Tolerance for turning coverage fractions into integer counts, so an exact
 # fraction (e.g. 0.2 on l=5) lands on the intended count instead of its floor.
@@ -74,7 +74,9 @@ def microstate_coverage_query(
     for name, bound in bounds.items():
         code = name_to_code.get(name)
         if code is None:
-            raise ValueError(f"unknown species {name!r}; known: {builder.species_names}")
+            raise ValueError(
+                f"unknown species {name!r}; known: {builder.species_names}"
+            )
         lo, hi = _bound_pair(bound)
         if lo is not None:
             min_counts[code] = max(min_counts[code], math.ceil(lo * l - _EPS))
@@ -88,4 +90,8 @@ def microstate_coverage_query(
     if predicate is not None:
         idxs = [i for i in idxs if predicate(microstate_coverage(builder, i))]
 
-    return np.asarray(sorted(idxs), dtype=int)
+    # decode_state returns bytes (pyo3's mapping for Vec<u8>), so each row
+    # must be unpacked with list() before np.asarray can build an int array.
+    vec_states = [list(decode_state(i, l, n_species)) for i in sorted(idxs)]
+
+    return np.asarray(vec_states, dtype=int)
