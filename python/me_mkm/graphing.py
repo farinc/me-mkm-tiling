@@ -4,7 +4,11 @@ If omitted, defaults to ['*', 'A*', 'B*', ...].
 """
 
 from me_mkm._me_mkm import decode_state
-from me_mkm.coverage import coverage_classes
+from me_mkm.microstates import coverage_classes
+
+import json
+from importlib.resources import files
+from pathlib import Path
 
 _AUTO_COLORS = [
     "#1A5FA8",
@@ -18,6 +22,7 @@ _AUTO_COLORS = [
     "#558B2F",
     "#6A1B9A",
 ]
+
 
 def _first_present(obj, *names, default=None):
     """Return the first non-empty attribute from obj."""
@@ -94,11 +99,12 @@ def _reactions_from_builder(builder) -> list:
         )
     return result
 
+
 def tile_style(topology):
     """Return topology.style as an int, defaulting to brickwork/square row."""
     try:
         return int(getattr(topology, "style", 0))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -160,12 +166,13 @@ def site_positions(l, topology=None):
     # style 0: original brickwork icon layout
     return {i: [0, i] for i in range(l)}
 
+
 def verify_uniformity(builder, groups, flat_reactions):
     """Check that every reaction's reactive-match count is constant within each
     coverage class (so a single per-class multiplier is well defined).
 
     groups maps a coverage-class counts-tuple to that class's microstate
-    indices (from me_mkm.coverage.coverage_classes). The reactive counting is
+    indices (from me_mkm.microstates.coverage_classes). The reactive counting is
     done in Rust via builder.count_reactive.
     """
     base = builder.n_species
@@ -180,6 +187,7 @@ def verify_uniformity(builder, groups, flat_reactions):
             if len(counts) > 1:
                 return False, key, rxn["name"]
     return True, None, None
+
 
 def tex_name(s):
     """Convert species name to KaTeX math. '*' → '{*}', 'A*' → r'\text{A}^{*}'."""
@@ -227,6 +235,7 @@ def make_equation(pattern_in, pattern_out, all_species, rate_fwd=None, rate_bwd=
 
     return f"{lhs} {arrow} {rhs}"
 
+
 def delta_counts_from_patterns(pattern_in, pattern_out, n_ads):
     delta = [0] * n_ads
     for s_in, s_out in zip(pattern_in, pattern_out):
@@ -236,6 +245,7 @@ def delta_counts_from_patterns(pattern_in, pattern_out, n_ads):
             if s_out > 0:
                 delta[s_out - 1] += 1
     return delta
+
 
 def build_graph(
     builder, display_reactions=None, species_names=None, title=None, node_colors=None
@@ -253,7 +263,7 @@ def build_graph(
     species_names : list of str, optional
         Full species list including the empty site as index 0.
         Length must be n_ads + 1.  Defaults to ['*', 'A*', 'B*', ...].
-        This matches the convention of me_mkm.tile.coverages().
+        This matches the convention of me_mkm.observables.coverage_mean().
     title : str, optional
     node_colors : dict, optional
         Map from counts-tuple to CSS colour string.
@@ -280,7 +290,12 @@ def build_graph(
         else _reactions_from_builder(builder)
     )
 
-    groups = coverage_classes(builder)
+    # local counts-tuple -> indices lookup for the graph build below; plain-int
+    # keys so counts land in the graph JSON as ints, not numpy int64.
+    groups = {
+        tuple(int(c) for c in counts): idxs
+        for counts, idxs in coverage_classes(builder)
+    }
     style = tile_style(topology)
     icon_pos = site_positions(l, topology)
     icon_max_col = max(c for [r, c] in icon_pos.values()) + 1
@@ -311,7 +326,9 @@ def build_graph(
                     "pattern_out": bwd["pattern_out"],
                     "color": col,
                     "rate_symbol": _reaction_rate_symbols(bwd, rxn["name"] + "⁻¹")[0],
-                    "rate_symbol_latex": _reaction_rate_symbols(bwd, rxn["name"] + "⁻¹")[1],
+                    "rate_symbol_latex": _reaction_rate_symbols(
+                        bwd, rxn["name"] + "⁻¹"
+                    )[1],
                     "direction": "backward",
                 }
             )
@@ -448,7 +465,9 @@ def build_graph(
                             "n_pairs": round(n, 4),
                             "label": f"{ni}×",
                             "rate_symbol": rxn["rate_symbol"],
-                            "rate_symbol_latex": rxn.get("rate_symbol_latex", rxn["rate_symbol"]),
+                            "rate_symbol_latex": rxn.get(
+                                "rate_symbol_latex", rxn["rate_symbol"]
+                            ),
                             "color": rxn["color"],
                         }
                     )
@@ -474,3 +493,36 @@ def build_graph(
         "nodes": nodes,
         "edges": edges,
     }
+
+
+def _template() -> str:
+    return files("me_mkm").joinpath("memkm_viewer.html").read_text(encoding="utf-8")
+
+
+def save_html(graph_data: dict, path: str = "me_mkm_graph.html") -> Path:
+    """
+    Write a self-contained HTML viewer with *graph_data* embedded.
+
+    The output file has no external dependencies beyond CDN-hosted KaTeX
+    and Cytoscape.js — just open it in any modern browser.
+
+    Parameters
+    ----------
+    graph_data : dict
+        Output of :func:`me_mkm.graphing.build_graph`.
+    path : str or Path
+        Destination file path (default: ``me_mkm_graph.html``).
+
+    Returns
+    -------
+    Path
+        Resolved absolute path of the written file.
+    """
+    html = _template()
+    json_blob = json.dumps(graph_data, ensure_ascii=False)
+    # Inject a load() call just before the closing tag of the module script.
+    inject = f"\n// embedded data\nload({json_blob});\n"
+    html = html.replace("</script>\n</body>", inject + "</script>\n</body>", 1)
+    out = Path(path).resolve()
+    out.write_text(html, encoding="utf-8")
+    return out

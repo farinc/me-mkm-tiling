@@ -1,11 +1,11 @@
 """
-Partition the microstate space by species occupancy and collect microstates
-matching a coverage condition (e.g. species A at coverage <= 0.2).
+Enumerate and query the microstate space.
 
-A coverage class groups microstates sharing the same per-species site-count
-signature; species s's coverage in a microstate is n_s / l. Species names and
-their order come from the builder (builder.species_names), so callers never pass
-a name list. Index 0 is not privileged -- it is just species 0 (default "*").
+Pure combinatorics over microstates -- decode a microstate index into its site
+vector, group states into coverage classes, and select states by a coverage
+condition. Nothing here needs a solved distribution; it describes which states
+exist and what they look like. Quantities computed *from* a solved distribution
+(mean coverage, coverage histograms, production rates) live in me_mkm.observables.
 """
 
 import math
@@ -19,22 +19,47 @@ from me_mkm._me_mkm import MEMKMBuilder, decode_state, state_counts  # noqa: F40
 _EPS = 1e-9
 
 
-def microstate_coverage(builder: MEMKMBuilder, idx: int) -> dict:
-    """Coverage of one microstate as {species_name: n_species / l}, over every
-    species in builder.species_names (the fractions sum to 1)."""
-    counts = state_counts(idx, builder.l, builder.n_species)
-    return {name: counts[i] / builder.l for i, name in enumerate(builder.species_names)}
+def _decode_all(builder: MEMKMBuilder) -> np.ndarray:
+    """Every microstate's site vector as an (n_states, l) int array; row oi is
+    microstate oi. decode_state returns bytes (pyo3's Vec<u8>), so each row is
+    unpacked with list() before np.array can build an int array."""
+    base = builder.n_species
+    return np.array(
+        [list(decode_state(oi, builder.l, base)) for oi in range(builder.n_states)],
+        dtype=int,
+    )
 
 
-def coverage_classes(builder: MEMKMBuilder) -> dict:
-    """Map each coverage class to its microstate indices as
-    {counts_tuple: np.ndarray[int]}. counts_tuple holds the site counts of
-    species 1..n_species-1 (species 0's count is l minus their sum). Degeneracy
-    is len(indices)."""
-    return {
-        tuple(counts): np.asarray(idxs, dtype=int)
+def microstate_vectors(builder: MEMKMBuilder, Theta) -> np.ndarray:
+    """
+    Every microstate's site vector (n_states, l), index-aligned with a solved
+    distribution: states[oi] <-> Theta[oi]. Theta ((n,) or (n, n_t)) is only
+    checked for a matching state axis -- the decode depends solely on the index,
+    builder.l, and builder.n_species.
+    """
+    Theta = np.asarray(Theta)
+    if Theta.shape[0] != builder.n_states:
+        raise ValueError(
+            f"Theta has {Theta.shape[0]} states along axis 0, expected {builder.n_states}"
+        )
+    return _decode_all(builder)
+
+
+def microstate_coverage(builder: MEMKMBuilder, idx: int) -> np.ndarray:
+    """Coverage of one microstate as an array indexed by species code,
+    coverage[s] = n_s / l (the fractions sum to 1)."""
+    return np.array(state_counts(idx, builder.l, builder.n_species)) / builder.l
+
+
+def coverage_classes(builder: MEMKMBuilder) -> list:
+    """Coverage-class partition as a list of (counts, indices) pairs, sorted by
+    counts. counts is the site-count array of species 1..n_species-1 (species
+    0's count is l - counts.sum()); indices are that class's microstate indices.
+    Degeneracy is len(indices)."""
+    return [
+        (np.asarray(counts, dtype=int), np.asarray(idxs, dtype=int))
         for counts, idxs in builder.coverage_classes()
-    }
+    ]
 
 
 def _bound_pair(bound):
@@ -57,9 +82,9 @@ def microstate_coverage_query(
           microstate_coverage_query(b, A=0.2)          # coverage_A <= 0.2
           microstate_coverage_query(b, A=(0.3, None))  # coverage_A >= 0.3
       Any species may be bounded, including species 0.
-    - predicate: coverage_dict -> bool, for conditions the bounds can't express
-      (ratios, sums, differences); coverage_dict is microstate_coverage()'s
-      output, e.g. predicate=lambda c: c["A"] + c["B"] <= 0.5.
+    - predicate: coverage_array -> bool, for conditions the bounds can't express
+      (ratios, sums, differences); coverage_array is microstate_coverage()'s
+      output, indexed by species code, e.g. predicate=lambda c: c[1] + c[2] <= 0.5.
 
     All constraints are ANDed. Returns a sorted np.ndarray of indices.
     """

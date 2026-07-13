@@ -1,0 +1,5 @@
+*.pdf
+
+# Papers are gitignored (not committed) but should still be in the knowledge graph
+!papers/
+!papers/*.pdf

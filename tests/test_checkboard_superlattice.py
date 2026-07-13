@@ -43,7 +43,7 @@ from me_mkm import (
     Reaction,
     TileSettings,
     build_W,
-    coverages,
+    coverage_mean,
     production_rate,
     solve_steady_state,
 )
@@ -88,8 +88,8 @@ def exact_theta_rate(K, tile_settings):
     builder = build_system(K, tile_settings)
     W = build_W(builder, steady_state=True)
     Theta_ss, _ = solve_steady_state(W)
-    theta = coverages(builder, Theta_ss)["A"]
-    rate = production_rate(builder, Theta_ss, {"dimer": 1.0})
+    theta = coverage_mean(builder, Theta_ss)[1]
+    rate = production_rate(builder, Theta_ss, np.array([0.0, 0.0, 1.0]))  # dimer
     return theta, rate
 
 

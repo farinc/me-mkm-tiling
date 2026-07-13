@@ -21,7 +21,7 @@ from me_mkm import (
     InteractionModel,
     build_W,
     build_W_components,
-    coverages,
+    coverage_mean,
     assemble_W,
     assemble_dW_dbeta,
     assemble_dW_dlnC,
@@ -84,7 +84,7 @@ class TestAssembleRegression:
     def test_rate_override(self):
         builder = make_builder(k_ads=1.0, k_des=1.0)
         W_default = assemble_W(builder)
-        W_override = assemble_W(builder, rates={"ads": 2.0})
+        W_override = assemble_W(builder, rates=np.array([2.0, 1.0]))  # [ads, des]
         # only the "ads" component should change, scaled by (2.0 - 1.0)
         components = {r.name: c for r, c in
                       zip(builder.get_reactions(), build_W_components(builder))}
@@ -119,7 +119,7 @@ class TestBetaDerivative:
         Theta_ss, lu = solve_steady_state(Wbar)
 
         dWbar_dbeta = to_steady_state_derivative_form(
-            assemble_dW_dbeta(builder, dk_dbeta={})
+            assemble_dW_dbeta(builder, dk_dbeta=np.zeros(builder.n_rxns))
         )
         dTheta_analytic = steady_state_derivative(lu, dWbar_dbeta, Theta_ss)
 
@@ -142,7 +142,7 @@ class TestBetaDerivative:
         Wbar = to_steady_state_form(assemble_W(builder))
         Theta_ss, lu = solve_steady_state(Wbar)
         dWbar_dbeta = to_steady_state_derivative_form(
-            assemble_dW_dbeta(builder, dk_dbeta={})
+            assemble_dW_dbeta(builder, dk_dbeta=np.zeros(builder.n_rxns))
         )
         dTheta = steady_state_derivative(lu, dWbar_dbeta, Theta_ss)
         assert np.allclose(dTheta, 0.0, atol=1e-12)
@@ -162,7 +162,7 @@ class TestLnCDerivative:
         Theta_ss, lu = solve_steady_state(Wbar)
 
         dWbar_dlnC = to_steady_state_derivative_form(
-            assemble_dW_dlnC(builder, conc_reaction_names={"ads"})
+            assemble_dW_dlnC(builder, conc_mask=np.array([True, False]))  # [ads, des]
         )
         dTheta_analytic = steady_state_derivative(lu, dWbar_dlnC, Theta_ss)
 
@@ -180,7 +180,7 @@ class TestLnCDerivative:
 
 
 # ===========================================================================
-# 4. Coverage derivative cross-check (eq. 5) -- coverages() needs no new code
+# 4. Coverage derivative cross-check (eq. 5) -- coverage_mean() needs no new code
 # ===========================================================================
 
 class TestCoverageDerivative:
@@ -190,20 +190,20 @@ class TestCoverageDerivative:
         Wbar = to_steady_state_form(assemble_W(builder))
         Theta_ss, lu = solve_steady_state(Wbar)
         dWbar_dbeta = to_steady_state_derivative_form(
-            assemble_dW_dbeta(builder, dk_dbeta={})
+            assemble_dW_dbeta(builder, dk_dbeta=np.zeros(builder.n_rxns))
         )
         dTheta = steady_state_derivative(lu, dWbar_dbeta, Theta_ss)
-        dtheta_analytic = coverages(builder, dTheta)["A"]
+        dtheta_analytic = coverage_mean(builder, dTheta)[1]
 
         h = 1e-5
-        theta_p = coverages(
+        theta_p = coverage_mean(
             make_builder(k_ads, k_des, eps, kbt=1.0 / (beta0 + h)),
             theta_ss_at(k_ads, k_des, eps, 1.0 / (beta0 + h)),
-        )["A"]
-        theta_m = coverages(
+        )[1]
+        theta_m = coverage_mean(
             make_builder(k_ads, k_des, eps, kbt=1.0 / (beta0 - h)),
             theta_ss_at(k_ads, k_des, eps, 1.0 / (beta0 - h)),
-        )["A"]
+        )[1]
         dtheta_fd = (theta_p - theta_m) / (2 * h)
 
         assert abs(dtheta_analytic - dtheta_fd) < 1e-6
@@ -219,9 +219,9 @@ class TestProductionRate:
         k_ads, k_des = 1.3, 0.6
         builder = make_builder(k_ads=k_ads, k_des=k_des, eps=0.0)
         Theta_ss = steady_state(build_W(builder, steady_state=False))
-        theta_A = coverages(builder, Theta_ss)["A"]
+        theta_A = coverage_mean(builder, Theta_ss)[1]
 
-        r = production_rate(builder, Theta_ss, stoich={"des": 1.0})
+        r = production_rate(builder, Theta_ss, stoich=np.array([0.0, 1.0]))  # des
         expected = k_des * theta_A
         assert abs(r - expected) < 1e-10
 
@@ -236,13 +236,13 @@ class TestProductionRate:
         Wbar = to_steady_state_form(assemble_W(builder))
         Theta_ss, lu = solve_steady_state(Wbar)
 
-        dk_dbeta = {"des": -Ea * k_des_at(beta0)}
+        dk_dbeta = np.array([0.0, -Ea * k_des_at(beta0)])  # [ads, des]
         dWbar_dbeta = to_steady_state_derivative_form(
             assemble_dW_dbeta(builder, dk_dbeta=dk_dbeta)
         )
         dTheta = steady_state_derivative(lu, dWbar_dbeta, Theta_ss)
 
-        stoich = {"des": 1.0}
+        stoich = np.array([0.0, 1.0])  # des
         dr_P_dbeta_vec = production_rate_dbeta_vector(builder, stoich, dk_dbeta)
         dr_analytic = production_rate_derivative(
             builder, Theta_ss, dTheta, stoich, dr_P_dbeta_vec
@@ -276,13 +276,13 @@ class TestProductionRate:
         Wbar = to_steady_state_form(assemble_W(builder))
         Theta_ss, lu = solve_steady_state(Wbar)
 
-        dk_dbeta = {"des": -Ea * k_des_at(beta0)}
+        dk_dbeta = np.array([0.0, -Ea * k_des_at(beta0)])  # [ads, des]
         dWbar_dbeta = to_steady_state_derivative_form(
             assemble_dW_dbeta(builder, dk_dbeta=dk_dbeta)
         )
         dTheta = steady_state_derivative(lu, dWbar_dbeta, Theta_ss)
 
-        stoich = {"des": 1.0}
+        stoich = np.array([0.0, 1.0])  # des
         r_P = production_rate(builder, Theta_ss, stoich)
         dr_P_dbeta_vec = production_rate_dbeta_vector(builder, stoich, dk_dbeta)
         dr_P = production_rate_derivative(builder, Theta_ss, dTheta, stoich, dr_P_dbeta_vec)

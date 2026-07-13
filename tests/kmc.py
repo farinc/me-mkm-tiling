@@ -381,7 +381,7 @@ def run_kmc_dimer_steady_state(
     -------
     theta : time-averaged fractional coverage (post burn-in)
     rate  : time-averaged dimerization EVENTS per site per unit time
-        (matches me_mkm.tile.production_rate's 1/L normalisation, i.e.
+        (matches me_mkm.observables.production_rate's 1/L normalisation, i.e.
         paper eq. 4/5 -- NOT per-bond or per-A2-molecule-times-two).
     """
     rng = np.random.default_rng(seed)
@@ -514,7 +514,7 @@ def run_kmc_cyclic_dominance_trajectory(
 
     theta0 : (theta_A, theta_B) initial coverages; round(theta_X * l) sites
         of each species are placed at random, remainder vacant (matches
-        coverage_ic's max-entropy/independent-site convention on the Python
+        independent_site_distribution's max-entropy convention on the Python
         ME-MKM side).
 
     Returns

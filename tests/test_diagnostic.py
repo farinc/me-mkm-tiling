@@ -14,7 +14,7 @@ from me_mkm import (
     Reaction,
     TileSettings,
     build_W,
-    coverages,
+    coverage_mean,
     decode_state,
 )
 from scipy.sparse.linalg import spsolve
@@ -127,11 +127,11 @@ class TestLangmuir:
     def test_langmuir_coverage(self, tile_name, k_ads, k_des):
         builder = simple_builder(tile_name, k_ads=k_ads, k_des=k_des)
         Theta_ss = run_ss(builder)
-        theta = coverages(builder, Theta_ss)
+        theta = coverage_mean(builder, Theta_ss)
         expected = k_ads / (k_ads + k_des)
-        assert abs(theta["A"] - expected) < 1e-10, (
+        assert abs(theta[1] - expected) < 1e-10, (
             f"{tile_name} k_ads={k_ads} k_des={k_des}: "
-            f"got {theta['A']:.12f}, expected {expected:.12f}"
+            f"got {theta[1]:.12f}, expected {expected:.12f}"
         )
 
 
@@ -208,8 +208,8 @@ class TestInteractions:
         Theta_ni = run_ss(builder_ni)
         Theta_int = run_ss(builder_int)
 
-        theta_ni = coverages(builder_ni, Theta_ni)["A"]
-        theta_int = coverages(builder_int, Theta_int)["A"]
+        theta_ni = coverage_mean(builder_ni, Theta_ni)[1]
+        theta_int = coverage_mean(builder_int, Theta_int)[1]
 
         assert theta_int > theta_ni, (
             f"{tile_name}: attractive eps={eps} should raise coverage "
@@ -228,8 +228,8 @@ class TestInteractions:
         Theta_ni = run_ss(builder_ni)
         Theta_int = run_ss(builder_int)
 
-        theta_ni = coverages(builder_ni, Theta_ni)["A"]
-        theta_int = coverages(builder_int, Theta_int)["A"]
+        theta_ni = coverage_mean(builder_ni, Theta_ni)[1]
+        theta_int = coverage_mean(builder_int, Theta_int)[1]
 
         assert theta_int < theta_ni, (
             f"{tile_name}: repulsive eps={eps} should lower coverage "

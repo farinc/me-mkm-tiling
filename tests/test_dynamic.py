@@ -29,8 +29,8 @@ from me_mkm import (
     TileSettings,
     build_graph,
     build_W_components,
-    coverage_ic,
-    coverages,
+    coverage_mean,
+    independent_site_distribution,
     save_html,
 )
 from scipy.integrate import solve_ivp
@@ -86,15 +86,12 @@ def build_system(title, l, eps, k_des=K_DES):
     return builder
 
 
-def solve_memkm_dynamic(
-    builder, k_ads_func, k_des, t_eval, theta0_cov=None, species_names=None
-):
+def solve_memkm_dynamic(builder, k_ads_func, k_des, t_eval, theta0_cov=None):
     """dTheta/dt = W(t) @ Theta, W(t) = k_ads(t)*W_ads + k_des*W_des.
 
-    theta0_cov : dict of species_name -> coverage for the initial condition,
-        e.g. {"A": 0.3}. Sites are assumed independent at t=0 (max-entropy
+    theta0_cov : array indexed by species code giving the initial coverage,
+        e.g. [0.0, 0.3]. Sites are assumed independent at t=0 (max-entropy
         distribution for the given coverage). Defaults to all-empty surface.
-    species_names : passed through to coverage_ic, e.g. ["empty", "A"].
     """
     W_ads, W_des = build_W_components(builder)
 
@@ -102,7 +99,7 @@ def solve_memkm_dynamic(
         return (k_ads_func(t) * W_ads + k_des * W_des) @ theta
 
     if theta0_cov is not None:
-        theta0 = coverage_ic(builder, theta0_cov, species_names)
+        theta0 = independent_site_distribution(builder, theta0_cov)
     else:
         # all-empty surface: all probability in microstate 0 (every site = 0)
         theta0 = np.zeros(builder.n_states)
@@ -118,7 +115,7 @@ def solve_memkm_dynamic(
         atol=1e-12,
     )
     assert sol.success, sol.message
-    return coverages(builder, sol.y)["A"]
+    return coverage_mean(builder, sol.y)[1]
 
 
 def solve_mean_field(eps, k_ads_func, k_des, t_eval, z=Z, theta0=0.0):
@@ -351,8 +348,7 @@ def test_repulsive_checkerboard_vs_kmc():
         k_ads_func_rep,
         K_DES,
         T_EVAL_REP,
-        theta0_cov={"A": THETA0_REP},
-        species_names=["empty", "A"],
+        theta0_cov=np.array([0.0, THETA0_REP]),  # [empty, A]
     )
     theta_mf = solve_mean_field(
         EPS_REP, k_ads_func_rep, K_DES, T_EVAL_REP, theta0=THETA0_REP
