@@ -42,7 +42,7 @@ def coverage_mean(builder: MEMKMBuilder, Theta) -> np.ndarray:
 
 def coverage_distribution(builder: MEMKMBuilder, Theta):
     """
-    P[s, n] = total Theta over microstates with exactly n (n = 0..l-1) sites of species s.
+    P[s, n] = total Theta over microstates with exactly n (n = 0..l) sites of species s.
     If Theta is (Theta, t), then P[s, n, t] is returned.
     """
     Theta = np.asarray(Theta)
@@ -50,11 +50,11 @@ def coverage_distribution(builder: MEMKMBuilder, Theta):
     # One pass over the classes fills every species' histogram at once; each
     # class contributes its total mass to bin n0 of species 0 (the remainder)
     # and to bin counts[code-1] of every other species.
-    P = np.zeros((builder.n_species, l, *Theta.shape[1:]))
+    P = np.zeros((builder.n_species, l + 1, *Theta.shape[1:]))
     for counts, idxs in coverage_classes(builder):
         mass = Theta[idxs].sum(axis=0)
-        P[0, l - sum(counts) - 1] += mass
-        for code, n in enumerate(counts):
+        P[0, l - counts.sum()] += mass
+        for code, n in enumerate(counts, start=1):
             P[code, n] += mass
 
     return P

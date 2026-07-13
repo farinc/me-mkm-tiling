@@ -14,6 +14,7 @@ from me_mkm import (
     Reaction,
     TileSettings,
     build_W,
+    coverage_distribution,
     coverage_mean,
     decode_state,
 )
@@ -235,6 +236,77 @@ class TestInteractions:
             f"{tile_name}: repulsive eps={eps} should lower coverage "
             f"({theta_int:.4f} vs {theta_ni:.4f})"
         )
+
+
+class TestCoverageDistribution:
+    """
+    Adsorption/desorption with pairwise interactions satisfies detailed balance:
+    desorption at a site with m occupied neighbors carries exp(-m*eps/kBT), so
+    the stationary distribution is the lattice gas
+        Theta[s] ∝ r^{n_A(s)} * exp(eps * n_AA_pairs(s)),   r = k_ads/k_des.
+    Summing these Boltzmann weights per occupation number gives an exact target
+    for coverage_distribution.
+    """
+
+    R = 2.0
+    EPS = -0.5  # repulsive
+
+    def repulsive_builder(self, tile_name):
+        interaction = InteractionModel([[0.0, 0.0], [0.0, self.EPS]])
+        return simple_builder(
+            tile_name, k_ads=self.R, k_des=1.0, interaction=interaction
+        )
+
+    def boltzmann_histogram(self, builder):
+        """Exact P(n_A = n) from the lattice-gas weights, bins n = 0..l."""
+        l = builder.l
+        pairs = builder.neighbor_pairs()
+        hist = np.zeros(l + 1)
+        for s in range(builder.n_states):
+            state = list(decode_state(s, l, builder.n_species))
+            n_pairs = sum(1 for i, j in pairs if state[i] == 1 and state[j] == 1)
+            hist[sum(state)] += self.R ** sum(state) * np.exp(self.EPS * n_pairs)
+        return hist / hist.sum()
+
+    @pytest.mark.parametrize("tile_name", TILES)
+    def test_repulsive_langmuir_matches_boltzmann(self, tile_name):
+        builder = self.repulsive_builder(tile_name)
+        l = builder.l
+        P = coverage_distribution(builder, run_ss(builder))
+        expected = self.boltzmann_histogram(builder)
+
+        assert P.shape == (builder.n_species, l + 1)
+        assert np.allclose(P[1], expected, atol=1e-12), (
+            f"{tile_name}: P(n_A) {P[1]} != Boltzmann {expected}"
+        )
+        # Species 0 is the complement: n_* = l - n_A.
+        assert np.allclose(P[0], expected[::-1], atol=1e-12)
+
+    @pytest.mark.parametrize("tile_name", TILES)
+    def test_repulsive_langmuir_consistency(self, tile_name):
+        """Each species' histogram is a distribution whose mean is the coverage."""
+        builder = self.repulsive_builder(tile_name)
+        Theta_ss = run_ss(builder)
+        P = coverage_distribution(builder, Theta_ss)
+
+        assert np.allclose(P.sum(axis=1), 1.0, atol=1e-12)
+        ns = np.arange(builder.l + 1)
+        assert np.allclose(
+            P @ ns / builder.l, coverage_mean(builder, Theta_ss), atol=1e-12
+        )
+
+    def test_repulsion_shifts_distribution_down(self):
+        """Repulsion moves mass toward lower occupation: the mean drops and the
+        full-coverage state is suppressed relative to the noninteracting case."""
+        builder_ni = simple_builder("greek_cross", k_ads=self.R, k_des=1.0)
+        builder_rep = self.repulsive_builder("greek_cross")
+
+        P_ni = coverage_distribution(builder_ni, run_ss(builder_ni))
+        P_rep = coverage_distribution(builder_rep, run_ss(builder_rep))
+
+        ns = np.arange(builder_ni.l + 1)
+        assert P_rep[1] @ ns < P_ni[1] @ ns
+        assert P_rep[1, -1] < P_ni[1, -1]
 
 
 # ===========================================================================
