@@ -53,7 +53,7 @@ def coverage_distribution(builder: MEMKMBuilder, Theta):
     P = np.zeros((builder.n_species, l, *Theta.shape[1:]))
     for counts, idxs in coverage_classes(builder):
         mass = Theta[idxs].sum(axis=0)
-        P[0, l - sum(counts)] += mass
+        P[0, l - sum(counts) - 1] += mass
         for code, n in enumerate(counts):
             P[code, n] += mass
 
