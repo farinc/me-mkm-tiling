@@ -17,14 +17,6 @@ from me_mkm.generator import build_W_components, build_dW_dbeta_components
 from me_mkm.microstates import _decode_all, coverage_classes
 
 
-def _specie_or_code(builder, target_species: str | int):
-    return (
-        list(builder.species_names).index(target_species)
-        if isinstance(target_species, str)
-        else int(target_species)
-    )
-
-
 def coverage_mean(builder: MEMKMBuilder, Theta) -> np.ndarray:
     """
     Per-species mean coverage or coverage derivative dTheta_ss/dx from Theta, the
