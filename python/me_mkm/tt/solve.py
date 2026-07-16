@@ -94,6 +94,46 @@ def solve_steady_state_tt(
     return theta, info
 
 
+def sweep_steady_state_tt(
+    build_builder,
+    param_values,
+    c: float = 1.0,
+    max_rank: int = 50,
+    threshold: float = 1e-12,
+    repeats: int = 20,
+):
+    """Stationary solve across a parameter sweep, warm-starting each point from
+    the previous solution.
+
+    On a smooth branch the stationary distribution changes little between
+    neighboring parameter values, so seeding each MALS solve with the previous
+    theta cuts sweeps and keeps the TT ranks bounded (the whole point of walking
+    a sweep rather than solving each point cold).
+
+    build_builder : param -> MEMKMBuilder for that parameter value.
+    param_values  : iterable of the swept parameter.
+
+    Returns a list of (param, theta_tt, TTSolveInfo), in sweep order.
+    """
+    from me_mkm.tt.operator import build_W_tt
+
+    results = []
+    theta0 = None
+    for p in param_values:
+        W_tt = build_W_tt(build_builder(p))
+        theta, info = solve_steady_state_tt(
+            W_tt,
+            theta0=theta0,
+            c=c,
+            max_rank=max_rank,
+            threshold=threshold,
+            repeats=repeats,
+        )
+        results.append((p, theta, info))
+        theta0 = theta  # warm-start the next point
+    return results
+
+
 def steady_state_derivative_tt(
     W_tt: TT,
     dW_tt: TT,

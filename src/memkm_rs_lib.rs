@@ -83,17 +83,13 @@ pub trait InteractionModel: std::fmt::Debug + Send + Sync {
 
     /// The concrete model's __repr__, for embedding in Reaction's repr.
     fn repr_str(&self) -> String;
-
-    /// Clone into a boxed trait object (Box<dyn ...> can't derive Clone).
     fn clone_box(&self) -> Box<dyn InteractionModel>;
-
-    /// Hand the concrete class back to Python (get_interaction etc.).
     fn to_py(&self, py: Python) -> Py<PyAny>;
 }
 
-/// (S_in, S_out) of one event: ε summed over the non-reacting neighbors of
-/// each reacting site — S_in with the initial species, S_out with the
-/// pattern_out species — plus, for a pair event, the mutual term of the two
+/// (S_in, S_out) of one event: eps summed over the non-reacting neighbors of
+/// each reacting site, S_in with the initial species, S_out with the
+/// pattern_out species. plus, for a pair event, the mutual term of the two
 /// reacting sites (always a bonded pair by construction), counted once.
 /// S_out lookups are skipped unless need_out.
 #[inline]

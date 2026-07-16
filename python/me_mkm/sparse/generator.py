@@ -10,6 +10,7 @@ The rate value defined in Reaction becomes unused.
 
 import numpy as np
 import scipy.sparse as sp
+from scipy.sparse.linalg import LinearOperator
 
 from me_mkm._me_mkm import MEMKMBuilder
 
@@ -90,6 +91,48 @@ def assemble_W(builder: MEMKMBuilder, rates=None) -> sp.csc_array:
     if rates is None:
         rates = _base_rates(builder)
     return _combine(builder, rates, build_W_components(builder))
+
+
+def build_W_operator(builder: MEMKMBuilder, rates=None) -> LinearOperator:
+    """
+    Dynamical-form W as a matrix-free scipy LinearOperator: rather than
+    assembling W = sum(k_i * components[i]) into one sparse matrix, its matvec
+    applies each per-reaction component in turn and accumulates,
+
+        W @ x = sum(k_i * (components[i] @ x)),
+
+    and rmatvec does the same with the transposed components (W^T @ x), so the
+    operator plugs straight into solvers/eigensolvers in
+    scipy.sparse.linalg (gmres, cg, eigs, ...)
+    Zero-rate reactions are dropped once, up front.
+
+    `rates` (an array indexed by reaction, defaulting to each Reaction's own
+    rate) can override the base rates without rebuilding the components -- the
+    operator holds references to them, so mutating `rates` afterwards does not
+    change what it applies.
+    """
+    if rates is None:
+        rates = _base_rates(builder)
+    active = [
+        (float(r), comp)
+        for r, comp in zip(rates, build_W_components(builder))
+        if r != 0.0
+    ]
+    n = builder.n_states
+
+    def matvec(x):
+        y = np.zeros(n, dtype=float)
+        for r, comp in active:
+            y += r * (comp @ x)
+        return y
+
+    def rmatvec(x):
+        y = np.zeros(n, dtype=float)
+        for r, comp in active:
+            y += r * (comp.T @ x)
+        return y
+
+    return LinearOperator((n, n), matvec=matvec, rmatvec=rmatvec, dtype=float)
 
 
 def assemble_dW_dbeta(builder: MEMKMBuilder, dk_dbeta) -> sp.csc_array:
