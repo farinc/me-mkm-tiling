@@ -4,7 +4,8 @@
 import builtins
 import typing
 __all__ = [
-    "InteractionModel",
+    "BepInteraction",
+    "InitialStateInteraction",
     "MEMKMBuilder",
     "Reaction",
     "TileSettings",
@@ -14,22 +15,53 @@ __all__ = [
 ]
 
 @typing.final
-class InteractionModel:
+class BepInteraction:
     r"""
-    Pairwise nearest-neighbor interaction energies ε[s1][s2].
-    
-    Rate correction for a reaction event:
-        correction = exp( -Sum_{non-reacting neighbors} ε[sp_reacting][sp_neighbor] / kBT )
-    
-    The sum runs over non-reacting neighbors of each reacting site.
+    Brønsted-Evans-Polanyi (proximity factor ω): the TS energy interpolates
+    linearly between initial and final state, so only the ω-weighted change
+    in interaction energy enters the barrier:
+        correction = exp( -ω · (S_in - S_out) / kBT )
+    ω = 0 is an early TS (rate blind to interactions), ω = 1 a late TS
+    (barrier tracks the full reaction-energy shift). ω is independent kinetic
+    information. A forward/reverse reaction pair satisfies detailed balance
+    when their omegas sum to 1.
+    """
+    @property
+    def epsilon(self) -> builtins.list[builtins.list[builtins.float]]: ...
+    @property
+    def omega(self) -> builtins.float: ...
+    @property
+    def kbt(self) -> builtins.float: ...
+    def __new__(cls, epsilon: typing.Sequence[typing.Sequence[builtins.float]], omega: builtins.float, kbt: builtins.float = 1.0) -> BepInteraction: ...
+    def with_omega(self, omega: builtins.float) -> BepInteraction:
+        r"""
+        Copy at a different ω; energies and kBT unchanged.
+        """
+    def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class InitialStateInteraction:
+    r"""
+    Initial-state approximation: the transition state carries no lateral
+    interactions ("pinned" at the interaction-free reference), so the full
+    initial-state (de)stabilisation enters the barrier:
+        correction = exp( -S_in / kBT )
+    Needs energies only — this scheme has no free kinetic parameter — and
+    satisfies detailed balance by construction (forward and reverse share the
+    pinned TS). It is its own scheme, not a special BEP ω: no single ω
+    reproduces it for e.g. a hop.
     """
     @property
     def epsilon(self) -> builtins.list[builtins.list[builtins.float]]: ...
     @property
     def kbt(self) -> builtins.float: ...
-    def __new__(cls, epsilon: typing.Sequence[typing.Sequence[builtins.float]], kbt: builtins.float = 1.0) -> InteractionModel: ...
+    def __new__(cls, epsilon: typing.Sequence[typing.Sequence[builtins.float]], kbt: builtins.float = 1.0) -> InitialStateInteraction: ...
     @staticmethod
-    def noninteracting(n_species: builtins.int, kbt: builtins.float) -> InteractionModel: ...
+    def noninteracting(n_species: builtins.int, kbt: builtins.float = 1.0) -> InitialStateInteraction: ...
+    def to_bep(self, omega: builtins.float) -> BepInteraction:
+        r"""
+        BEP model with the same energies at the given ω.
+        """
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -46,11 +78,11 @@ class MEMKMBuilder:
     (0 = species_names[0], the conventional default "*"). It is the single source
     of truth for both the names and the species count: `n_species == len(species_names)`
     and the state space is `n_species ** l`. NOTE: n_species counts ALL species,
-    index 0 included -- there is no implicit extra "empty" to add.
-    InteractionModel.epsilon is indexed in species_names order.
+    index 0 included there is no implicit extra "empty" to add.
+    An interaction model's epsilon is indexed in species_names order.
     
-    Each Reaction can carry its own InteractionModel for its λ correction.
-    If a Reaction has none, the builder's global InteractionModel is used
+    Each Reaction can carry its own interaction model for its λ correction.
+    If a Reaction has none, the builder's global model is used
     (default: noninteracting → all corrections = 1).
     """
     @property
@@ -81,13 +113,13 @@ class MEMKMBuilder:
         """
     @property
     def n_rxns(self) -> builtins.int: ...
-    def __new__(cls, tile_settings: TileSettings, reactions: typing.Sequence[Reaction], species_names: typing.Sequence[builtins.str], interaction: typing.Optional[InteractionModel] = None) -> MEMKMBuilder: ...
+    def __new__(cls, tile_settings: TileSettings, reactions: typing.Sequence[Reaction], species_names: typing.Sequence[builtins.str], interaction: typing.Optional[InitialStateInteraction | BepInteraction] = None) -> MEMKMBuilder: ...
     def add_reaction(self, rxn: Reaction) -> None: ...
     def set_reactions(self, reactions: typing.Sequence[Reaction]) -> None: ...
     def get_reactions(self) -> builtins.list[Reaction]: ...
     def clear_reactions(self) -> None: ...
-    def set_interaction(self, interaction: InteractionModel) -> None: ...
-    def get_interaction(self) -> InteractionModel: ...
+    def set_interaction(self, interaction: InitialStateInteraction | BepInteraction) -> None: ...
+    def get_interaction(self) -> InitialStateInteraction | BepInteraction: ...
     def validate(self) -> dict: ...
     def neighbor_pairs(self) -> builtins.list[tuple[builtins.int, builtins.int]]:
         r"""
@@ -164,8 +196,10 @@ class Reaction:
                    used as the label above the arrow in the graph viewer.
                    Defaults to name if empty.
     rate_symbol_latex : Optional LaTeX string for the rate constant symbol (e.g. r"k_{\mathrm{ads}}")
-    interaction  : optional per-reaction InteractionModel; if None the builder's
-                   global InteractionModel (default noninteracting) is used.
+    interaction  : optional per-reaction interaction model (any of the
+                   InteractionModel implementors, e.g. InitialStateInteraction
+                   or BepInteraction); if None the builder's global model
+                   (default noninteracting) is used.
     """
     @property
     def pattern_in(self) -> builtins.list[builtins.int]: ...
@@ -191,18 +225,19 @@ class Reaction:
     def rate_symbol_latex(self) -> typing.Optional[builtins.str]: ...
     @rate_symbol_latex.setter
     def rate_symbol_latex(self, value: typing.Optional[builtins.str]) -> None: ...
-    def __new__(cls, pattern_in: typing.Sequence[builtins.int], pattern_out: typing.Sequence[builtins.int], rate: builtins.float, name: builtins.str = '', rate_symbol: builtins.str = '', rate_symbol_latex: typing.Optional[builtins.str] = None, interaction: typing.Optional[InteractionModel] = None) -> Reaction: ...
-    def get_interaction(self) -> typing.Optional[InteractionModel]:
+    def __new__(cls, pattern_in: typing.Sequence[builtins.int], pattern_out: typing.Sequence[builtins.int], rate: builtins.float, name: builtins.str = '', rate_symbol: builtins.str = '', rate_symbol_latex: typing.Optional[builtins.str] = None, interaction: typing.Optional[InitialStateInteraction | BepInteraction] = None) -> Reaction: ...
+    def get_interaction(self) -> typing.Optional[InitialStateInteraction | BepInteraction]:
         r"""
-        Get the per-reaction InteractionModel (None if not including interactions (builder default)).
+        Get the per-reaction interaction model (None if not set: the builder's
+        global model applies).
         """
-    def set_interaction(self, interaction: typing.Optional[InteractionModel]) -> None:
+    def set_interaction(self, interaction: typing.Optional[InitialStateInteraction | BepInteraction]) -> None:
         r"""
-        Set a per-reaction InteractionModel.
+        Set a per-reaction interaction model.
         """
     def with_rate(self, rate: builtins.float) -> Reaction: ...
     def with_rate_symbol(self, rate_symbol: builtins.str) -> Reaction: ...
-    def with_interaction(self, interaction: typing.Optional[InteractionModel]) -> Reaction: ...
+    def with_interaction(self, interaction: typing.Optional[InitialStateInteraction | BepInteraction]) -> Reaction: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final

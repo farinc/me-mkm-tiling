@@ -9,7 +9,7 @@ import pytest
 import scipy.sparse as sp
 
 from me_mkm import (
-    InteractionModel,
+    InitialStateInteraction,
     MEMKMBuilder,
     Reaction,
     TileSettings,
@@ -33,7 +33,7 @@ FISH = TileSettings.square(sites=8, d=3)
 
 
 def langmuir(tile, eps=0.0, k_ads=1.3, k_des=0.7):
-    im = InteractionModel([[0.0, 0.0], [0.0, eps]])
+    im = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
     reactions = [
         Reaction([0], [1], rate=k_ads, name="ads"),
         Reaction([1], [0], rate=k_des, name="des"),

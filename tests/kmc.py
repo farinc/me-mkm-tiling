@@ -199,7 +199,7 @@ def run_kmc(
     topo     : Topology object (provides .deltas)
     l        : number of sites
     K        : equilibrium constant K[A] = k_ads / k_des
-    eps      : A-A interaction energy in kBT units (eps[1][1] in InteractionModel)
+    eps      : A-A interaction energy in kBT units (eps[1][1] in InitialStateInteraction)
     k_des    : bare desorption rate (default 1.0)
     n_steps  : number of KMC events
     seed     : RNG seed

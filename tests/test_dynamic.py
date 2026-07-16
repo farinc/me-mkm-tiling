@@ -23,7 +23,7 @@ import matplotlib
 import numpy as np
 from kmc import run_kmc_dynamic_ensemble
 from me_mkm import (
-    InteractionModel,
+    InitialStateInteraction,
     MEMKMBuilder,
     Reaction,
     TileSettings,
@@ -55,7 +55,7 @@ np.random.seed(rs)
 
 
 def build_system(title, l, eps, k_des=K_DES):
-    interaction = InteractionModel([[0.0, 0.0], [0.0, eps]])
+    interaction = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
     reactions = [
         Reaction(
             [0],

@@ -1,34 +1,14 @@
 """
-Steady-state reproduction of Adams et al. 2025, Figure 3.
-
-Scheme 1 (adsorption/desorption of A, with strong A-A repulsion eps_AA =
+Steady-state reproduction of Adams et al. 2025, Figure 3. Scheme 1
+(adsorption/desorption of A, with strong A-A repulsion eps_AA =
 3.0 kBT) plus Scheme 2 (Langmuir-Hinshelwood dimerization 2A* -> A2 + 2*,
 krxn = 1.0*kdes), swept over the adsorption equilibrium constant K[A] =
 kads/kdes. In our sign convention (rate_correction = exp(-eps*n_occ_neighbors),
-see test_dynamic.py), their repulsive eps_AA = 3.0 kBT is EPS = -3.0.
-
-Unlike test_dynamic.py (which drives k_ads(t) and checks the transient
-response), this reproduces the paper's *steady-state* result: the checkerboard
-superlattice pins coverage near theta=0.5 over nearly two log-decades of K[A],
-and -- more strikingly -- suppresses the dimerization rate far below what
-either a Bragg-Williams mean-field (MF-MKM) or the Greek-cross tile (l=5,d=2,
-the complete graph K_5, which cannot host a checkerboard at all) predicts at
-the *same* coverage. Same theta, wildly different reactivity, because in the
-true checkerboard order A* sites are never adjacent -- exactly the qualitative
-signature the paper uses to argue mean-field and small non-checkerboard tiles
-give the right coverage for the wrong reason.
-
-The dimerization reaction is given its own noninteracting InteractionModel
+see test_dynamic.py), their repulsive eps_AA = 3.0 kBT is EPS = -3.0. The
+dimerization reaction is given its own noninteracting InitialStateInteraction
 (matching the original AdamsGePeters-1DTile Square_Dimer_1Ad_Reactions: the
 krxn step is unmodified by lambda, only desorption is), so the builder's
-shared repulsive InteractionModel only touches adsorption/desorption.
-
-kMC ground truth is ensemble-averaged (several independent trajectories per
-K[A], mean +/- SEM) rather than a single trajectory: dimerization events are
-rare in the checkerboard plateau, and a single ~1e5-event trajectory on a
-32-site ring can land far from the true mean by chance (this is what exposed
-the pair-reaction double-counting bug below -- a single noisy trajectory had
-coincidentally matched the doubled/buggy rate).
+shared repulsive InitialStateInteraction only touches adsorption/desorption.
 """
 
 from functools import lru_cache
@@ -38,7 +18,7 @@ import numpy as np
 import pytest
 from kmc import run_kmc_dimer_steady_state
 from me_mkm import (
-    InteractionModel,
+    InitialStateInteraction,
     MEMKMBuilder,
     Reaction,
     TileSettings,
@@ -64,12 +44,12 @@ FISH_SCALE = TileSettings.square(sites=8, d=3)
 # K_5, cannot host a checkerboard
 GREEK_CROSS = TileSettings.square(sites=5, d=2)
 
-_NONINTERACTING_PAIR = InteractionModel.noninteracting(2, 1.0)
+_NONINTERACTING_PAIR = InitialStateInteraction.noninteracting(2, 1.0)
 
 
 def build_system(K, tile_settings):
     """Scheme 1 (ads/des, repulsive) + Scheme 2 (dimerization, uncorrected)."""
-    interaction = InteractionModel([[0.0, 0.0], [0.0, EPS]])
+    interaction = InitialStateInteraction([[0.0, 0.0], [0.0, EPS]])
     reactions = [
         Reaction([0], [1], rate=K * K_DES, name="ads"),
         Reaction([1], [0], rate=K_DES, name="des"),

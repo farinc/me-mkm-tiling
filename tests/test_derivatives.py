@@ -18,7 +18,8 @@ from me_mkm import (
     MEMKMBuilder,
     TileSettings,
     Reaction,
-    InteractionModel,
+    BepInteraction,
+    InitialStateInteraction,
     coverage_mean,
 )
 from me_mkm.sparse import (
@@ -51,7 +52,7 @@ def steady_state(W):
 
 def make_builder(k_ads=1.0, k_des=1.0, eps=0.0, kbt=1.0):
     """Single-adsorbate Langmuir builder, optionally with A-A interaction."""
-    interaction = InteractionModel([[0.0, 0.0], [0.0, eps]], kbt=kbt)
+    interaction = InitialStateInteraction([[0.0, 0.0], [0.0, eps]], kbt=kbt)
     reactions = [
         Reaction([0], [1], rate=k_ads, name="ads"),
         Reaction([1], [0], rate=k_des, name="des"),
@@ -310,3 +311,33 @@ class TestProductionRate:
 
         Ea_eff = -dr_P / r_P
         assert abs(Ea_eff - Ea) < 1e-3, f"Ea_eff={Ea_eff}, expected ~{Ea}"
+
+
+class TestDWdbetaOmegaBEP:
+    def test_dW_dbeta_with_omega_matches_fd(self):
+        """BEP mode (omega set): delta_e is w*(S_in - S_out), so dW/dbeta must
+        track it. With omega on the global model, ads gets a nonzero S_out
+        correction too, exercising the final-state branch of the derivative."""
+        eps, beta0, h = 0.4, 1.3, 1e-6
+
+        def builder_at(beta):
+            im = BepInteraction([[0.0, 0.0], [0.0, eps]], 0.35, kbt=1.0 / beta)
+            reactions = [
+                Reaction([0], [1], rate=1.2, name="ads"),
+                Reaction([1], [0], rate=0.7, name="des"),
+            ]
+            return MEMKMBuilder(
+                tile_settings=TILE,
+                reactions=reactions,
+                species_names=["*", "A"],
+                interaction=im,
+            )
+
+        dW = assemble_dW_dbeta(builder_at(beta0), dk_dbeta=np.zeros(2)).toarray()
+        # steady_state=False: the FD must see the raw dynamical W, not the
+        # version whose last row is the (beta-independent) normalisation row.
+        fd = (
+            build_W(builder_at(beta0 + h), steady_state=False).toarray()
+            - build_W(builder_at(beta0 - h), steady_state=False).toarray()
+        ) / (2 * h)
+        assert np.allclose(dW, fd, rtol=1e-5, atol=1e-8)

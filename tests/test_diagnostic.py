@@ -9,13 +9,15 @@ Fish-scale   (Adams 2025) — l=8,  Topology.square(d=3) — 4-reg, 16 bond pair
 import numpy as np
 import pytest
 from me_mkm import (
-    InteractionModel,
+    BepInteraction,
+    InitialStateInteraction,
     MEMKMBuilder,
     Reaction,
     TileSettings,
     coverage_distribution,
     coverage_mean,
     decode_state,
+    encode_state,
 )
 from me_mkm.sparse import build_W
 from scipy.sparse.linalg import spsolve
@@ -200,7 +202,7 @@ class TestInteractions:
     @pytest.mark.parametrize("tile_name", TILES)
     def test_attractive_raises_coverage(self, tile_name):
         eps = 0.5  # kBT units
-        interaction = InteractionModel([[0.0, 0.0], [0.0, eps]])
+        interaction = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
         builder_ni = simple_builder(tile_name, k_ads=1.0, k_des=1.0)
         builder_int = simple_builder(
             tile_name, k_ads=1.0, k_des=1.0, interaction=interaction
@@ -220,7 +222,7 @@ class TestInteractions:
     @pytest.mark.parametrize("tile_name", TILES)
     def test_repulsive_lowers_coverage(self, tile_name):
         eps = -0.5
-        interaction = InteractionModel([[0.0, 0.0], [0.0, eps]])
+        interaction = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
         builder_ni = simple_builder(tile_name, k_ads=1.0, k_des=1.0)
         builder_int = simple_builder(
             tile_name, k_ads=1.0, k_des=1.0, interaction=interaction
@@ -238,6 +240,99 @@ class TestInteractions:
         )
 
 
+class TestOmegaBEP:
+    """
+    InitialStateInteraction pins the TS at the interaction-free reference:
+    correction exp(-S_in/kBT). BepInteraction(eps, w) is the BEP scheme,
+    exp(-w*(S_in - S_out)/kBT), where S_out re-evaluates the reacting sites
+    with their pattern_out species. A forward/reverse pair whose omegas sum
+    to 1 shares the base scheme's equilibrium (detailed balance), while the
+    kinetics differ.
+    """
+
+    @pytest.mark.parametrize("tile_name", TILES)
+    def test_omega_zero_is_uncorrected(self, tile_name):
+        # omega=0 is an early TS: rates blind to interactions, W identical
+        # to the noninteracting builder even with nonzero eps.
+        im = BepInteraction([[0.0, 0.0], [0.0, 0.7]], 0.0)
+        W_int = build_W(simple_builder(tile_name, interaction=im))
+        W_ni = build_W(simple_builder(tile_name))
+        assert np.allclose(W_int.toarray(), W_ni.toarray())
+
+    @pytest.mark.parametrize("tile_name", TILES)
+    def test_omega_one_matches_base_for_desorption(self, tile_name):
+        # For ads/des the final state of the reacting site is empty (zero eps
+        # row), so S_out = 0 for desorption and S_in = 0 for adsorption:
+        # omega=1 on des and omega=0 on ads reproduce the base-scheme W exactly.
+        eps = 0.5
+        base = simple_builder(
+            tile_name, interaction=InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+        )
+        reactions = [
+            Reaction(
+                [0], [1], rate=1.0, name="ads",
+                interaction=BepInteraction([[0.0, 0.0], [0.0, eps]], 0.0),
+            ),
+            Reaction(
+                [1], [0], rate=1.0, name="des",
+                interaction=BepInteraction([[0.0, 0.0], [0.0, eps]], 1.0),
+            ),
+        ]
+        bep = MEMKMBuilder(
+            tile_settings=TILES[tile_name],
+            reactions=reactions,
+            species_names=["*", "A"],
+        )
+        assert np.allclose(build_W(base).toarray(), build_W(bep).toarray())
+
+    @pytest.mark.parametrize("tile_name", TILES)
+    @pytest.mark.parametrize("omega_ads", [0.25, 0.5, 1.0])
+    def test_conjugate_omegas_share_equilibrium(self, tile_name, omega_ads):
+        # ads(omega=w) + des(omega=1-w) shares the base scheme's detailed
+        # balance ratio, so the (reversible) steady state is identical even
+        # though the individual rates are not.
+        eps = 0.6
+        base = simple_builder(
+            tile_name, interaction=InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+        )
+
+        def im(w):
+            return BepInteraction([[0.0, 0.0], [0.0, eps]], w)
+
+        reactions = [
+            Reaction([0], [1], rate=1.0, name="ads", interaction=im(omega_ads)),
+            Reaction([1], [0], rate=1.0, name="des", interaction=im(1.0 - omega_ads)),
+        ]
+        bep = MEMKMBuilder(
+            tile_settings=TILES[tile_name],
+            reactions=reactions,
+            species_names=["*", "A"],
+        )
+        assert np.allclose(run_ss(base), run_ss(bep), atol=1e-10)
+
+    def test_pair_event_mutual_term(self):
+        # The bond between a pair event's two reacting sites enters the
+        # correction once: pair desorption A-A -> *-* from an otherwise empty
+        # K5 tile carries exp(-eps/kBT) (interaction-free-TS mode) or
+        # exp(-w*eps/kBT) (BEP mode), from the broken A-A bond alone.
+        eps = 0.5
+        pair_des = Reaction([1, 1], [0, 0], rate=1.0, name="2A des")
+        from_idx = encode_state([1, 1, 0, 0, 0], 2)
+
+        def w_entry(interaction):
+            builder = MEMKMBuilder(
+                tile_settings=TILES["greek_cross"],
+                reactions=[pair_des],
+                species_names=["*", "A"],
+                interaction=interaction,
+            )
+            return build_W(builder).toarray()[0, from_idx]
+
+        im = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+        assert w_entry(im) == pytest.approx(np.exp(-eps))
+        assert w_entry(im.to_bep(0.5)) == pytest.approx(np.exp(-eps / 2))
+
+
 class TestCoverageDistribution:
     """
     Adsorption/desorption with pairwise interactions satisfies detailed balance:
@@ -252,7 +347,7 @@ class TestCoverageDistribution:
     EPS = -0.5  # repulsive
 
     def repulsive_builder(self, tile_name):
-        interaction = InteractionModel([[0.0, 0.0], [0.0, self.EPS]])
+        interaction = InitialStateInteraction([[0.0, 0.0], [0.0, self.EPS]])
         return simple_builder(
             tile_name, k_ads=self.R, k_des=1.0, interaction=interaction
         )

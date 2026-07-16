@@ -1,5 +1,6 @@
 from me_mkm._me_mkm import (
-    InteractionModel,
+    BepInteraction,
+    InitialStateInteraction,
     MEMKMBuilder,
     Reaction,
     TileSettings,

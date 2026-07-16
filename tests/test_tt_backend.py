@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from me_mkm import (
-    InteractionModel,
+    InitialStateInteraction,
     MEMKMBuilder,
     Reaction,
     TileSettings,
@@ -37,7 +37,7 @@ HEX = TileSettings.hex(2)  # creamcups K_7, 128 states
 
 def langmuir(tile, eps=0.0):
     """Single-adsorbate Langmuir builder with optional A-A interaction."""
-    im = InteractionModel([[0.0, 0.0], [0.0, eps]])
+    im = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
     reactions = [
         Reaction([0], [1], rate=1.3, name="ads"),
         Reaction([1], [0], rate=0.7, name="des"),

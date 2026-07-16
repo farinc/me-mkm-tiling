@@ -46,16 +46,111 @@ fn state_counts(idx: usize, l: usize, base: usize) -> Vec<usize> {
     count_species(&decode(idx, l, base), base)
 }
 
-/// Pairwise nearest-neighbor interaction energies ε[s1][s2].
-///
-/// Rate correction for a reaction event:
-///     correction = exp( -Sum_{non-reacting neighbors} ε[sp_reacting][sp_neighbor] / kBT )
-///
-/// The sum runs over non-reacting neighbors of each reacting site.
+// ─── Interaction models ──────────────────────────────────────────────────────
+
+/// How lateral interactions modify an elementary step's rate.
+pub trait InteractionModel: std::fmt::Debug + Send + Sync {
+    /// True when every correction this model can produce is exactly 1.
+    fn trivial(&self) -> bool;
+
+    /// Multiplicative rate correction and the underlying barrier shift ΔE:
+    /// corr = exp(-β·ΔE) with β = 1/kbt, so ∂corr/∂β = -ΔE·corr — the
+    /// β-derivative path relies on this pairing.
+    ///
+    /// reacting_sites: indices into state that are changing.
+    /// out_species: the reaction's pattern_out codes, positionally aligned
+    /// with reacting_sites.
+    fn rate_correction_and_delta_e(
+        &self,
+        state: &[u8],
+        reacting_sites: &[usize],
+        out_species: &[u8],
+        neighbors: &[Vec<usize>],
+    ) -> (f64, f64);
+
+    /// Just the multiplicative rate correction.
+    #[inline]
+    fn rate_correction(
+        &self,
+        state: &[u8],
+        reacting_sites: &[usize],
+        out_species: &[u8],
+        neighbors: &[Vec<usize>],
+    ) -> f64 {
+        self.rate_correction_and_delta_e(state, reacting_sites, out_species, neighbors)
+            .0
+    }
+
+    /// The concrete model's __repr__, for embedding in Reaction's repr.
+    fn repr_str(&self) -> String;
+
+    /// Clone into a boxed trait object (Box<dyn ...> can't derive Clone).
+    fn clone_box(&self) -> Box<dyn InteractionModel>;
+
+    /// Hand the concrete class back to Python (get_interaction etc.).
+    fn to_py(&self, py: Python) -> Py<PyAny>;
+}
+
+/// (S_in, S_out) of one event: ε summed over the non-reacting neighbors of
+/// each reacting site — S_in with the initial species, S_out with the
+/// pattern_out species — plus, for a pair event, the mutual term of the two
+/// reacting sites (always a bonded pair by construction), counted once.
+/// S_out lookups are skipped unless need_out.
+#[inline]
+fn interaction_sums(
+    epsilon: &[Vec<f64>],
+    state: &[u8],
+    reacting_sites: &[usize],
+    out_species: &[u8],
+    neighbors: &[Vec<usize>],
+    need_out: bool,
+) -> (f64, f64) {
+    let mut in_rxn = [false; 64];
+    for &s in reacting_sites {
+        in_rxn[s] = true;
+    }
+    let mut s_in = 0.0f64;
+    let mut s_out = 0.0f64;
+    for (k, &site) in reacting_sites.iter().enumerate() {
+        let sp_in = state[site] as usize;
+        let sp_out = out_species[k] as usize;
+        for &nbr in &neighbors[site] {
+            if !in_rxn[nbr] {
+                let sp_nbr = state[nbr] as usize;
+                s_in += epsilon[sp_in][sp_nbr];
+                if need_out {
+                    s_out += epsilon[sp_out][sp_nbr];
+                }
+            }
+        }
+    }
+    // The partner's species changes with the reaction, so the mutual term
+    // can't ride along in the spectator sums above.
+    if reacting_sites.len() == 2 {
+        s_in += epsilon[state[reacting_sites[0]] as usize][state[reacting_sites[1]] as usize];
+        if need_out {
+            s_out += epsilon[out_species[0] as usize][out_species[1] as usize];
+        }
+    }
+    (s_in, s_out)
+}
+
+fn all_zero(epsilon: &[Vec<f64>]) -> bool {
+    epsilon.iter().all(|row| row.iter().all(|&e| e == 0.0))
+}
+
+/// Initial-state approximation: the transition state carries no lateral
+/// interactions ("pinned" at the interaction-free reference), so the full
+/// initial-state (de)stabilisation enters the barrier:
+///     correction = exp( -S_in / kBT )
+/// Needs energies only — this scheme has no free kinetic parameter — and
+/// satisfies detailed balance by construction (forward and reverse share the
+/// pinned TS). It is its own scheme, not a special BEP ω: no single ω
+/// reproduces it for e.g. a hop.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
-pub struct InteractionModel {
+pub struct InitialStateInteraction {
     #[pyo3(get)]
     pub epsilon: Vec<Vec<f64>>,
     #[pyo3(get)]
@@ -65,11 +160,11 @@ pub struct InteractionModel {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl InteractionModel {
+impl InitialStateInteraction {
     #[new]
     #[pyo3(signature = (epsilon, kbt=1.0))]
     pub fn new(epsilon: Vec<Vec<f64>>, kbt: f64) -> Self {
-        let trivial = epsilon.iter().all(|row| row.iter().all(|&e| e == 0.0));
+        let trivial = all_zero(&epsilon);
         Self {
             epsilon,
             kbt,
@@ -78,66 +173,202 @@ impl InteractionModel {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (n_species, kbt=1.0))]
     pub fn noninteracting(n_species: usize, kbt: f64) -> Self {
         Self::new(vec![vec![0.0; n_species]; n_species], kbt)
     }
 
+    /// BEP model with the same energies at the given ω.
+    pub fn to_bep(&self, omega: f64) -> BepInteraction {
+        BepInteraction::new(self.epsilon.clone(), omega, self.kbt)
+    }
+
     fn __repr__(&self) -> String {
         if self.trivial {
-            format!("InteractionModel(noninteracting, kBT={})", self.kbt)
+            format!("InitialStateInteraction(noninteracting, kBT={})", self.kbt)
         } else {
             format!(
-                "InteractionModel(epsilon={:?}, kBT={})",
+                "InitialStateInteraction(epsilon={:?}, kBT={})",
                 self.epsilon, self.kbt
             )
         }
     }
 }
 
-impl InteractionModel {
-    /// Compute multiplicative rate correction.
-    /// reacting_sites: indices into state that are changing.
-    /// The correction sums epsilon[sp_reacting][sp_neighbor] over
-    /// non-reacting neighbors of each reacting site.
-    #[inline]
-    fn rate_correction(
-        &self,
-        state: &[u8],
-        reacting_sites: &[usize],
-        neighbors: &[Vec<usize>],
-    ) -> f64 {
-        self.rate_correction_and_delta_e(state, reacting_sites, neighbors)
-            .0
+impl InteractionModel for InitialStateInteraction {
+    fn trivial(&self) -> bool {
+        self.trivial
     }
 
-    /// Same as `rate_correction`, but also returns the underlying ΔE (the
-    /// summed interaction energy), since `corr = exp(-β·ΔE)` (with
-    /// β = 1/kbt) gives `∂corr/∂β = -ΔE·corr`; needed by the steady-state
-    /// β-derivative path.
+    fn repr_str(&self) -> String {
+        self.__repr__()
+    }
+
+    fn clone_box(&self) -> Box<dyn InteractionModel> {
+        Box::new(self.clone())
+    }
+
+    fn to_py(&self, py: Python) -> Py<PyAny> {
+        Py::new(py, self.clone())
+            .expect("failed to allocate Python object")
+            .into_any()
+    }
+
     #[inline]
     fn rate_correction_and_delta_e(
         &self,
         state: &[u8],
         reacting_sites: &[usize],
+        out_species: &[u8],
         neighbors: &[Vec<usize>],
     ) -> (f64, f64) {
         if self.trivial {
             return (1.0, 0.0);
         }
-        let mut in_rxn = [false; 64];
-        for &s in reacting_sites {
-            in_rxn[s] = true;
+        let (s_in, _) = interaction_sums(
+            &self.epsilon,
+            state,
+            reacting_sites,
+            out_species,
+            neighbors,
+            false,
+        );
+        ((-s_in / self.kbt).exp(), s_in)
+    }
+}
+
+/// Brønsted-Evans-Polanyi (proximity factor ω): the TS energy interpolates
+/// linearly between initial and final state, so only the ω-weighted change
+/// in interaction energy enters the barrier:
+///     correction = exp( -ω · (S_in - S_out) / kBT )
+/// ω = 0 is an early TS (rate blind to interactions), ω = 1 a late TS
+/// (barrier tracks the full reaction-energy shift). ω is independent kinetic
+/// information. A forward/reverse reaction pair satisfies detailed balance
+/// when their omegas sum to 1.
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Clone, Debug)]
+pub struct BepInteraction {
+    #[pyo3(get)]
+    pub epsilon: Vec<Vec<f64>>,
+    #[pyo3(get)]
+    pub omega: f64,
+    #[pyo3(get)]
+    pub kbt: f64,
+    trivial: bool,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl BepInteraction {
+    #[new]
+    #[pyo3(signature = (epsilon, omega, kbt=1.0))]
+    pub fn new(epsilon: Vec<Vec<f64>>, omega: f64, kbt: f64) -> Self {
+        let trivial = all_zero(&epsilon);
+        Self {
+            epsilon,
+            omega,
+            kbt,
+            trivial,
         }
-        let mut delta_e = 0.0f64;
-        for &site in reacting_sites {
-            let sp = state[site] as usize;
-            for &nbr in &neighbors[site] {
-                if !in_rxn[nbr] {
-                    delta_e += self.epsilon[sp][state[nbr] as usize];
-                }
-            }
+    }
+
+    /// Copy at a different ω; energies and kBT unchanged.
+    pub fn with_omega(&self, omega: f64) -> Self {
+        Self::new(self.epsilon.clone(), omega, self.kbt)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BepInteraction(epsilon={:?}, omega={}, kBT={})",
+            self.epsilon, self.omega, self.kbt
+        )
+    }
+}
+
+impl InteractionModel for BepInteraction {
+    fn trivial(&self) -> bool {
+        self.trivial
+    }
+
+    fn repr_str(&self) -> String {
+        self.__repr__()
+    }
+
+    fn clone_box(&self) -> Box<dyn InteractionModel> {
+        Box::new(self.clone())
+    }
+
+    fn to_py(&self, py: Python) -> Py<PyAny> {
+        Py::new(py, self.clone())
+            .expect("failed to allocate Python object")
+            .into_any()
+    }
+
+    #[inline]
+    fn rate_correction_and_delta_e(
+        &self,
+        state: &[u8],
+        reacting_sites: &[usize],
+        out_species: &[u8],
+        neighbors: &[Vec<usize>],
+    ) -> (f64, f64) {
+        if self.trivial {
+            return (1.0, 0.0);
         }
+        let (s_in, s_out) = interaction_sums(
+            &self.epsilon,
+            state,
+            reacting_sites,
+            out_species,
+            neighbors,
+            true,
+        );
+        let delta_e = self.omega * (s_in - s_out);
         ((-delta_e / self.kbt).exp(), delta_e)
+    }
+}
+
+impl Clone for Box<dyn InteractionModel> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for Box<dyn InteractionModel> {
+    type Error = PyErr;
+
+    fn extract(ob: pyo3::Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        if let Ok(m) = ob.extract::<InitialStateInteraction>() {
+            return Ok(Box::new(m));
+        }
+        if let Ok(m) = ob.extract::<BepInteraction>() {
+            return Ok(Box::new(m));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "expected an interaction model (InitialStateInteraction or BepInteraction)",
+        ))
+    }
+}
+
+impl<'py> IntoPyObject<'py> for Box<dyn InteractionModel> {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = std::convert::Infallible;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(self.to_py(py).into_bound(py))
+    }
+}
+
+impl pyo3_stub_gen::PyStubType for Box<dyn InteractionModel> {
+    fn type_output() -> pyo3_stub_gen::TypeInfo {
+        pyo3_stub_gen::TypeInfo {
+            name: "InitialStateInteraction | BepInteraction".to_string(),
+            import: Default::default(),
+            source_module: None,
+            type_refs: Default::default(),
+        }
     }
 }
 
@@ -153,8 +384,10 @@ impl InteractionModel {
 ///                used as the label above the arrow in the graph viewer.
 ///                Defaults to name if empty.
 /// rate_symbol_latex : Optional LaTeX string for the rate constant symbol (e.g. r"k_{\mathrm{ads}}")
-/// interaction  : optional per-reaction InteractionModel; if None the builder's
-///                global InteractionModel (default noninteracting) is used.
+/// interaction  : optional per-reaction interaction model (any of the
+///                InteractionModel implementors, e.g. InitialStateInteraction
+///                or BepInteraction); if None the builder's global model
+///                (default noninteracting) is used.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
@@ -174,7 +407,7 @@ pub struct Reaction {
     pub rate_symbol: String,
     #[pyo3(get, set)]
     pub rate_symbol_latex: Option<String>,
-    interaction: Option<InteractionModel>,
+    interaction: Option<Box<dyn InteractionModel>>,
 }
 
 #[gen_stub_pymethods]
@@ -189,7 +422,7 @@ impl Reaction {
         name: String,
         rate_symbol: String,
         rate_symbol_latex: Option<String>,
-        interaction: Option<InteractionModel>,
+        interaction: Option<Box<dyn InteractionModel>>,
     ) -> PyResult<Self> {
         if pattern_in.len() != pattern_out.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -212,13 +445,14 @@ impl Reaction {
         })
     }
 
-    /// Get the per-reaction InteractionModel (None if not including interactions (builder default)).
-    pub fn get_interaction(&self) -> Option<InteractionModel> {
+    /// Get the per-reaction interaction model (None if not set: the builder's
+    /// global model applies).
+    pub fn get_interaction(&self) -> Option<Box<dyn InteractionModel>> {
         self.interaction.clone()
     }
 
-    /// Set a per-reaction InteractionModel.
-    pub fn set_interaction(&mut self, interaction: Option<InteractionModel>) {
+    /// Set a per-reaction interaction model.
+    pub fn set_interaction(&mut self, interaction: Option<Box<dyn InteractionModel>>) {
         self.interaction = interaction;
     }
 
@@ -238,7 +472,7 @@ impl Reaction {
         }
     }
 
-    pub fn with_interaction(&self, interaction: Option<InteractionModel>) -> Self {
+    pub fn with_interaction(&self, interaction: Option<Box<dyn InteractionModel>>) -> Self {
         Self {
             interaction,
             ..self.clone()
@@ -252,7 +486,7 @@ impl Reaction {
             format!(", rate_symbol={:?}", self.rate_symbol)
         };
         let im = match &self.interaction {
-            Some(m) => format!(", {}", m.__repr__()),
+            Some(m) => format!(", {}", m.repr_str()),
             None => String::new(),
         };
         format!(
@@ -263,10 +497,16 @@ impl Reaction {
 }
 
 impl Reaction {
-    /// Resolve which InteractionModel to use: per-reaction if set, else fallback.
+    /// Resolve which interaction model to use: per-reaction if set, else fallback.
     #[inline]
-    fn effective_interaction<'a>(&'a self, fallback: &'a InteractionModel) -> &'a InteractionModel {
-        self.interaction.as_ref().unwrap_or(fallback)
+    fn effective_interaction<'a>(
+        &'a self,
+        fallback: &'a dyn InteractionModel,
+    ) -> &'a dyn InteractionModel {
+        match &self.interaction {
+            Some(m) => m.as_ref(),
+            None => fallback,
+        }
     }
 }
 
@@ -431,7 +671,7 @@ impl Tile {
     ///   the brickwork's nearest-neighbor offset and adds no new bond
     ///   type, d=l-1 is d=1 read the other way around the ring, and
     ///   d=l/2 (even l) is its own mirror image (i+d and i-d land on the
-    ///   same site) -- all three are valid square-lattice tiles (rule1 and
+    ///   same site). All three are valid square-lattice tiles (rule1 and
     ///   rule2 pass) but cannot represent the checkerboard superlattice.
     fn validate(l: usize, d: usize) -> (bool, bool, bool) {
         let rule1 = d != 0 && d != l;
@@ -454,18 +694,18 @@ impl Tile {
 /// (0 = species_names[0], the conventional default "*"). It is the single source
 /// of truth for both the names and the species count: `n_species == len(species_names)`
 /// and the state space is `n_species ** l`. NOTE: n_species counts ALL species,
-/// index 0 included -- there is no implicit extra "empty" to add.
-/// InteractionModel.epsilon is indexed in species_names order.
+/// index 0 included there is no implicit extra "empty" to add.
+/// An interaction model's epsilon is indexed in species_names order.
 ///
-/// Each Reaction can carry its own InteractionModel for its λ correction.
-/// If a Reaction has none, the builder's global InteractionModel is used
+/// Each Reaction can carry its own interaction model for its λ correction.
+/// If a Reaction has none, the builder's global model is used
 /// (default: noninteracting → all corrections = 1).
 #[gen_stub_pyclass]
 #[pyclass]
 pub struct MEMKMBuilder {
     tile: Tile,
     reactions: Vec<Reaction>,
-    interaction: InteractionModel,
+    interaction: Box<dyn InteractionModel>,
     #[pyo3(get)]
     pub tile_settings: TileSettings,
     #[pyo3(get)]
@@ -485,7 +725,7 @@ impl MEMKMBuilder {
         tile_settings: TileSettings,
         reactions: Vec<Reaction>,
         species_names: Vec<String>,
-        interaction: Option<InteractionModel>,
+        interaction: Option<Box<dyn InteractionModel>>,
     ) -> PyResult<Self> {
         // species_names fixes the species count: base = n_species, so a site
         // holds one of n_species codes and the state space is n_species ** l.
@@ -508,8 +748,10 @@ impl MEMKMBuilder {
         let n_pairs = tile.neighbor_pairs.len();
         // No interaction model given -> noninteracting (all corrections = 1),
         // sized for n_species species.
-        let interaction =
-            interaction.unwrap_or_else(|| InteractionModel::noninteracting(n_species, 1.0));
+        let interaction = interaction.unwrap_or_else(|| {
+            Box::new(InitialStateInteraction::noninteracting(n_species, 1.0))
+                as Box<dyn InteractionModel>
+        });
         Ok(Self {
             tile,
             reactions,
@@ -563,10 +805,10 @@ impl MEMKMBuilder {
         self.reactions.len()
     }
 
-    pub fn set_interaction(&mut self, interaction: InteractionModel) {
+    pub fn set_interaction(&mut self, interaction: Box<dyn InteractionModel>) {
         self.interaction = interaction;
     }
-    pub fn get_interaction(&self) -> InteractionModel {
+    pub fn get_interaction(&self) -> Box<dyn InteractionModel> {
         self.interaction.clone()
     }
 
@@ -745,15 +987,19 @@ impl MEMKMBuilder {
             let state = decode(from_idx, self.tile.l, self.tile.base);
 
             for rxn in &self.reactions {
-                let im = rxn.effective_interaction(&self.interaction);
+                let im = rxn.effective_interaction(self.interaction.as_ref());
 
                 match rxn.pattern_in.len() {
                     // ── 1st order reaction ───────────────────────────────────────────
                     1 => {
                         for site in 0..self.tile.l {
                             if state[site] == rxn.pattern_in[0] {
-                                let corr =
-                                    im.rate_correction(&state, &[site], &self.tile.neighbors);
+                                let corr = im.rate_correction(
+                                    &state,
+                                    &[site],
+                                    &rxn.pattern_out,
+                                    &self.tile.neighbors,
+                                );
                                 let rate = rxn.rate * corr;
                                 let mut ns = state.clone();
                                 ns[site] = rxn.pattern_out[0];
@@ -785,8 +1031,12 @@ impl MEMKMBuilder {
                                     fired_to = Some(to_idx);
                                     // Correction: non-reacting neighbors of both
                                     // reacting sites, derived from pattern_in.
-                                    let corr =
-                                        im.rate_correction(&state, &[s0, s1], &self.tile.neighbors);
+                                    let corr = im.rate_correction(
+                                        &state,
+                                        &[s0, s1],
+                                        &rxn.pattern_out,
+                                        &self.tile.neighbors,
+                                    );
                                     let rate = rxn.rate * corr;
                                     rows.push(to_idx as i32);
                                     cols.push(from_idx as i32);
@@ -848,14 +1098,18 @@ impl MEMKMBuilder {
             let state = decode(from_idx, self.tile.l, self.tile.base);
 
             for (ri, rxn) in self.reactions.iter().enumerate() {
-                let im = rxn.effective_interaction(&self.interaction);
+                let im = rxn.effective_interaction(self.interaction.as_ref());
 
                 match rxn.pattern_in.len() {
                     1 => {
                         for site in 0..self.tile.l {
                             if state[site] == rxn.pattern_in[0] {
-                                let corr =
-                                    im.rate_correction(&state, &[site], &self.tile.neighbors);
+                                let corr = im.rate_correction(
+                                    &state,
+                                    &[site],
+                                    &rxn.pattern_out,
+                                    &self.tile.neighbors,
+                                );
                                 let mut ns = state.clone();
                                 ns[site] = rxn.pattern_out[0];
                                 let to_idx = encode(&ns, self.tile.base);
@@ -885,8 +1139,12 @@ impl MEMKMBuilder {
                                         continue;
                                     }
                                     fired_to = Some(to_idx);
-                                    let corr =
-                                        im.rate_correction(&state, &[s0, s1], &self.tile.neighbors);
+                                    let corr = im.rate_correction(
+                                        &state,
+                                        &[s0, s1],
+                                        &rxn.pattern_out,
+                                        &self.tile.neighbors,
+                                    );
                                     rows[ri].push(to_idx as i32);
                                     cols[ri].push(from_idx as i32);
                                     vals[ri].push(corr);
@@ -934,7 +1192,7 @@ impl MEMKMBuilder {
             let state = decode(from_idx, self.tile.l, self.tile.base);
 
             for (ri, rxn) in self.reactions.iter().enumerate() {
-                let im = rxn.effective_interaction(&self.interaction);
+                let im = rxn.effective_interaction(self.interaction.as_ref());
 
                 match rxn.pattern_in.len() {
                     // This is the site-matching as compute_w_components_coo (order-1
@@ -948,6 +1206,7 @@ impl MEMKMBuilder {
                                 let (corr, delta_e) = im.rate_correction_and_delta_e(
                                     &state,
                                     &[site],
+                                    &rxn.pattern_out,
                                     &self.tile.neighbors,
                                 );
                                 let dcorr = -delta_e * corr;
@@ -988,6 +1247,7 @@ impl MEMKMBuilder {
                                     let (corr, delta_e) = im.rate_correction_and_delta_e(
                                         &state,
                                         &[s0, s1],
+                                        &rxn.pattern_out,
                                         &self.tile.neighbors,
                                     );
                                     let dcorr = -delta_e * corr;
@@ -1064,7 +1324,8 @@ impl MEMKMBuilder {
 #[pymodule]
 fn _me_mkm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TileSettings>()?;
-    m.add_class::<InteractionModel>()?;
+    m.add_class::<InitialStateInteraction>()?;
+    m.add_class::<BepInteraction>()?;
     m.add_class::<Reaction>()?;
     m.add_class::<MEMKMBuilder>()?;
     m.add_function(wrap_pyfunction!(decode_state, m)?)?;

@@ -1,11 +1,12 @@
 """
 Enumerate and query the microstate space.
 
-Pure combinatorics over microstates -- decode a microstate index into its site
-vector, group states into coverage classes, and select states by a coverage
-condition. Nothing here needs a solved distribution; it describes which states
-exist and what they look like. Quantities computed *from* a solved distribution
-(mean coverage, coverage histograms, production rates) live in me_mkm.observables.
+Pure combinatorics over microstates. Provide functions to decode a microstate
+index into its site vector, group states into coverage classes, and select states
+by a coverage condition. Nothing here needs a solved distribution; it describes
+which states exist and what they look like. Quantities computed *from* a solved
+distribution (mean coverage, coverage histograms, production rates) live in
+me_mkm.observables.
 """
 
 import math
