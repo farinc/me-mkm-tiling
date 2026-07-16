@@ -21,7 +21,7 @@ _EPS = 1e-9
 
 def _decode_all(builder: MEMKMBuilder) -> np.ndarray:
     """Every microstate's site vector as an (n_states, l) int array; row oi is
-    microstate oi. decode_state returns bytes (pyo3's Vec<u8>), so each row is
+    microstate oi. decode_state returns bytes, so each row is
     unpacked with list() before np.array can build an int array."""
     base = builder.n_species
     return np.array(
@@ -59,6 +59,47 @@ def coverage_classes(builder: MEMKMBuilder) -> list:
     return [
         (np.asarray(counts, dtype=int), np.asarray(idxs, dtype=int))
         for counts, idxs in builder.coverage_classes()
+    ]
+
+
+def pattern_delta_counts(pattern_in, pattern_out, n_ads) -> list:
+    """Net change a reaction makes to the coverage signature: delta[s-1] is the
+    change in species s's site count when pattern_in becomes pattern_out. Fixed
+    per reaction, so a firing from class counts always lands in class
+    counts + delta -- the coverage-class transition target."""
+    delta = [0] * n_ads
+    for s_in, s_out in zip(pattern_in, pattern_out):
+        if s_in != s_out:
+            if s_in > 0:
+                delta[s_in - 1] -= 1
+            if s_out > 0:
+                delta[s_out - 1] += 1
+    return delta
+
+
+def class_match_counts(builder: MEMKMBuilder, pattern_in) -> list:
+    """Reactive-match counts of a reaction pattern across the coverage-class
+    partition, as (counts, indices, matches) triples aligned with
+    coverage_classes; matches[j] is builder.count_reactive of the class's j-th
+    microstate (indices order) -- the per-state event multiplicity, equal to
+    -diagonal(W_r) at unit rate. An order-1 pattern's count is a species count
+    and therefore constant within a class; an order-2 (neighbor-pair) count
+    depends on the arrangement over the tile's bonds and need not be."""
+    base = builder.n_species
+    return [
+        (
+            counts,
+            idxs,
+            np.array(
+                [
+                    builder.count_reactive(
+                        decode_state(int(i), builder.l, base), pattern_in
+                    )
+                    for i in idxs
+                ]
+            ),
+        )
+        for counts, idxs in coverage_classes(builder)
     ]
 
 

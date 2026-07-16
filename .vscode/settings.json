@@ -11,5 +11,12 @@
     "[python]": {
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "charliermarsh.ruff"
+    },
+    "terminal.integrated.defaultProfile.windows": "Git Bash",
+    "terminal.integrated.profiles.windows": {
+        "Git Bash": {
+        "path": "C:\\Program Files\\Git\\bin\\bash.exe",
+        "icon": "terminal-bash"
+        }
     }
 }

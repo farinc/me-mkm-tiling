@@ -2,34 +2,20 @@
 Physical quantities from a solved distribution.
 
 Reduce a stationary (or time-resolved) distribution Theta over microstates to
-the numbers you actually report: per-species coverages, coverage histograms, and
-stoichiometric production rates, plus their parameter derivatives. Also builds
-independent-site initial conditions (the inverse direction: coverage -> Theta).
+the numbers you actually report: per-species coverages, coverage histograms,
+and class averages. Also builds independent-site initial conditions (the
+inverse direction: coverage -> Theta). Everything here is pure numpy
+combinatorics; the production-rate observables, which consume the sparse
+per-reaction W components, live in me_mkm.sparse.observables.
 
-All coverage/production sums are linear in Theta, so passing a derivative
-dTheta/dx in place of Theta yields the derivative of the observable directly.
+All coverage sums are linear in Theta, so passing a derivative dTheta/dx in
+place of Theta yields the derivative of the observable directly.
 """
 
 import numpy as np
 
 from me_mkm._me_mkm import MEMKMBuilder
-from me_mkm.generator import build_W_components, build_dW_dbeta_components
-from me_mkm.microstates import _decode_all, coverage_classes
-
-
-def coverage_mean(builder: MEMKMBuilder, Theta) -> np.ndarray:
-    """
-    Per-species mean coverage or coverage derivative dTheta_ss/dx from Theta, the
-    distribution over all microstates, as an array indexed by species code as given
-    from builder.
-
-    Theta is either (n,) or (n, n_t) (from a time series); the
-    result gains a matching trailing axis.
-    """
-    Theta = np.asarray(Theta)
-    states = _decode_all(builder)  # (n_states, l)
-    counts = np.stack([(states == s).sum(axis=1) for s in range(builder.n_species)])
-    return (counts @ Theta) / builder.l  # (base,) or (base, n_t)
+from me_mkm.microstates import _decode_all, class_match_counts, coverage_classes
 
 
 def coverage_distribution(builder: MEMKMBuilder, Theta):
@@ -52,11 +38,58 @@ def coverage_distribution(builder: MEMKMBuilder, Theta):
     return P
 
 
+def class_average_matches(builder: MEMKMBuilder, pattern_in, Theta=None):
+    """
+    Per-coverage-class average reactive-match count of a reaction pattern (the
+    per-state event multiplicity M_r, -diagonal(W_r) at unit rate).
+
+    Returns (averages, nonuniform): averages maps each class's counts tuple to
+    its average match count. nonuniform lists the counts tuples whose members
+    disagree (empty means every average is an exact per-microstate count).
+
+    Theta : distribution over microstates, optional. Without it every class
+        member is weighted equally (combinatorial average). With it, members
+        are weighted by their conditional probability within the class,
+        sum(matches * Theta[idxs]) / sum(Theta[idxs])
+    """
+    if Theta is not None:
+        Theta = np.asarray(Theta, dtype=float)
+    averages, nonuniform = {}, []
+    for counts, idxs, matches in class_match_counts(builder, pattern_in):
+        key = tuple(int(c) for c in counts)
+        if matches.size and (matches != matches[0]).any():
+            nonuniform.append(key)
+        mean = matches.mean() if matches.size else 0.0
+        if Theta is not None:
+            mass = Theta[idxs].sum()
+            if mass > 0.0:
+                mean = (matches @ Theta[idxs]) / mass
+        averages[key] = float(mean)
+    return averages, nonuniform
+
+
+def coverage_mean(builder: MEMKMBuilder, Theta) -> np.ndarray:
+    """
+    Per-species mean coverage or coverage derivative dTheta_ss/dx from Theta, the
+    distribution over all microstates, as an array indexed by species code as given
+    from builder.
+
+    Theta is either (n,) or (n, n_t) (from a time series); the
+    result gains a matching trailing axis.
+    """
+    Theta = np.asarray(Theta)
+    states = _decode_all(builder)  # (n_states, l)
+    counts = np.stack([(states == s).sum(axis=1) for s in range(builder.n_species)])
+    return (counts @ Theta) / builder.l  # (base,) or (base, n_t)
+
+
 def independent_site_distribution(builder: MEMKMBuilder, coverage) -> np.ndarray:
     """
     Maximum-entropy microstate distribution with prescribed marginal coverages:
-    sites are independent, so Theta0[s] = prod_j p_j^n_j(s). The natural IC for a
-    known coverage with no spatial correlation.
+    sites are independent, so Theta0[s] = prod_j p_j^n_j(s). This function provides
+    a simple IC for the dynamic ME-MKM given a initial coverage with no spatial
+    correlation. Note that coverages are limited by the tile size
+    (coverages = 0,...,l / l)
 
     coverage : array indexed by species code, coverage[s] = fraction of sites in
         species s. Entry 0 is replaced by the remainder 1 - sum(coverage[1:]),
@@ -68,72 +101,3 @@ def independent_site_distribution(builder: MEMKMBuilder, coverage) -> np.ndarray
     # Site-independent product Theta0[s] = prod_j p[site_j]; p[states] maps each
     # site to its marginal probability, then the row product gives the state's.
     return np.prod(p[_decode_all(builder)], axis=1)
-
-
-def _event_flux(builder: MEMKMBuilder) -> list:
-    """Per-reaction per-state total event flux at unit base rate,
-    -components[i].diagonal() (builder.get_reactions() order) -- the per-state
-    reaction count already sitting on each component's diagonal."""
-    return [-comp.diagonal() for comp in build_W_components(builder)]
-
-
-def production_rate_vector(builder: MEMKMBuilder, stoich) -> np.ndarray:
-    """
-    Per-microstate production rate r_P[state] (paper eq. 4):
-        r_P = sum(stoich[i] * rate_i * event_flux_i).
-
-    stoich : array indexed by reaction, net product count per event (0 = no
-        contribution, e.g. only the desorption entry set to track desorption).
-    """
-    r_P = np.zeros(builder.n_states)
-    for rxn, nu, flux in zip(builder.get_reactions(), stoich, _event_flux(builder)):
-        if nu != 0.0:
-            r_P += nu * rxn.rate * flux
-    return r_P
-
-
-def production_rate_dbeta_vector(builder: MEMKMBuilder, stoich, dk_dbeta) -> np.ndarray:
-    """d(r_P[state])/dbeta (paper eq. 6's per-state rate term), product rule analog
-    of assemble_dW_dbeta. stoich and dk_dbeta are arrays indexed by reaction."""
-    flux = _event_flux(builder)
-    dflux = [-dcomp.diagonal() for dcomp in build_dW_dbeta_components(builder)]
-    dr_P = np.zeros(builder.n_states)
-    for rxn, nu, dk, f, df in zip(
-        builder.get_reactions(), stoich, dk_dbeta, flux, dflux
-    ):
-        if nu != 0.0:
-            dr_P += nu * (dk * f + rxn.rate * df)
-    return dr_P
-
-
-def production_rate_dlnC_vector(builder: MEMKMBuilder, stoich, conc_mask) -> np.ndarray:
-    """d(r_P[state])/d(ln C) (paper eq. 6's per-state rate term), restricted to the
-    concentration-proportional steps marked by conc_mask. stoich and conc_mask are
-    arrays indexed by reaction."""
-    dr_P = np.zeros(builder.n_states)
-    for rxn, nu, m, flux in zip(
-        builder.get_reactions(), stoich, conc_mask, _event_flux(builder)
-    ):
-        if m and nu != 0.0:
-            dr_P += nu * rxn.rate * flux
-    return dr_P
-
-
-def production_rate(builder: MEMKMBuilder, Theta_ss, stoich) -> float:
-    """Scalar steady-state production rate (paper eq. 4): (1/L) * sum(Theta_ss *
-    r_P[state]). stoich is an array indexed by reaction."""
-    return float(Theta_ss @ production_rate_vector(builder, stoich)) / builder.l
-
-
-def production_rate_derivative(
-    builder: MEMKMBuilder, Theta_ss, dTheta_dx, stoich, dr_P_dx_vector: np.ndarray
-) -> float:
-    """
-    Scalar steady-state production-rate derivative (paper eq. 6):
-        (1/L) * sum(dTheta_ss/dx * r_P[state] + Theta_ss * dr_P[state]/dx)
-
-    dr_P_dx_vector : the per-state rate derivative, from
-        production_rate_dbeta_vector or production_rate_dlnC_vector.
-    """
-    r_P = production_rate_vector(builder, stoich)
-    return float(dTheta_dx @ r_P + Theta_ss @ dr_P_dx_vector) / builder.l

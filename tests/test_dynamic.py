@@ -3,12 +3,12 @@ Dynamic ME-MKM (W = W(t)) validated against Gillespie kMC.
 
 Two regimes are tested:
 
-1. test_dynamic_w_vs_kmc -- mild attractive interaction, fast sinusoidal
+1. test_dynamic_w_vs_kmc: mild attractive interaction, fast sinusoidal
    k_ads(t). General agreement check between the exact tile ME-MKM and a
    Bragg-Williams mean-field control against kMC "experimental" data.
 
-2. test_repulsive_checkerboard_vs_kmc -- strong repulsive interaction
-   (eps = -3.0, matching eps_AA = 3.0 kBT "repulsive" in Adams et al. 2025),
+2. test_repulsive_checkerboard_vs_kmc: strong repulsive interaction
+   (eps = -3.0, matching eps_AA = 3.0 kBT repulsive case in Adams et al. 2025),
    slow log-sinusoidal sweep of k_ads(t) through the checkerboard
    order-disorder transition. Adams et al. showed that this repulsion drives
    adsorbates into a checkerboard superlattice on the (l=8, d=3) brickwork
@@ -28,11 +28,11 @@ from me_mkm import (
     Reaction,
     TileSettings,
     build_graph,
-    build_W_components,
     coverage_mean,
     independent_site_distribution,
     save_html,
 )
+from me_mkm.sparse import build_W_components
 from scipy.integrate import solve_ivp
 
 matplotlib.use("Agg")
@@ -42,7 +42,7 @@ L = 8  # ME-MKM tile: 4-regular, 2**8=256 states, small enough to solve exactly
 TOPO = TileSettings.square(sites=L, d=3)  # tile settings (has .deltas, .sites)
 Z = 2 * len(TOPO.deltas)  # lattice coordination number (4 for fish-scale)
 K_DES = 1.0
-rs = 42  # random state
+rs = 42  # random state, you know this number...
 np.random.seed(rs)
 
 # The tile's neighbor structure (TOPO's deltas) describes a physically infinite

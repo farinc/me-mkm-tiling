@@ -42,8 +42,10 @@ from me_mkm import (
     MEMKMBuilder,
     Reaction,
     TileSettings,
-    build_W,
     coverage_mean,
+)
+from me_mkm.sparse import (
+    build_W,
     production_rate,
     solve_steady_state,
 )

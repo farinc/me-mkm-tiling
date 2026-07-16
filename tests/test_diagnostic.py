@@ -13,11 +13,11 @@ from me_mkm import (
     MEMKMBuilder,
     Reaction,
     TileSettings,
-    build_W,
     coverage_distribution,
     coverage_mean,
     decode_state,
 )
+from me_mkm.sparse import build_W
 from scipy.sparse.linalg import spsolve
 
 

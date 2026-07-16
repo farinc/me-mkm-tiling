@@ -19,9 +19,11 @@ from me_mkm import (
     TileSettings,
     Reaction,
     InteractionModel,
+    coverage_mean,
+)
+from me_mkm.sparse import (
     build_W,
     build_W_components,
-    coverage_mean,
     assemble_W,
     assemble_dW_dbeta,
     assemble_dW_dlnC,
@@ -29,9 +31,7 @@ from me_mkm import (
     to_steady_state_derivative_form,
     solve_steady_state,
     steady_state_derivative,
-    production_rate_vector,
     production_rate_dbeta_vector,
-    production_rate_dlnC_vector,
     production_rate,
     production_rate_derivative,
 )
@@ -56,13 +56,18 @@ def make_builder(k_ads=1.0, k_des=1.0, eps=0.0, kbt=1.0):
         Reaction([0], [1], rate=k_ads, name="ads"),
         Reaction([1], [0], rate=k_des, name="des"),
     ]
-    return MEMKMBuilder(tile_settings=TILE, reactions=reactions,
-                        species_names=["*", "A"], interaction=interaction)
+    return MEMKMBuilder(
+        tile_settings=TILE,
+        reactions=reactions,
+        species_names=["*", "A"],
+        interaction=interaction,
+    )
 
 
 # ===========================================================================
 # 1. assemble_W / to_steady_state_form regression vs. the direct Rust path
 # ===========================================================================
+
 
 class TestAssembleRegression:
     @pytest.mark.parametrize("eps", [0.0, 0.5, -0.7])
@@ -86,8 +91,10 @@ class TestAssembleRegression:
         W_default = assemble_W(builder)
         W_override = assemble_W(builder, rates=np.array([2.0, 1.0]))  # [ads, des]
         # only the "ads" component should change, scaled by (2.0 - 1.0)
-        components = {r.name: c for r, c in
-                      zip(builder.get_reactions(), build_W_components(builder))}
+        components = {
+            r.name: c
+            for r, c in zip(builder.get_reactions(), build_W_components(builder))
+        }
         expected = W_default + 1.0 * components["ads"]
         diff = np.abs((W_override - expected).toarray())
         assert diff.max() < 1e-12
@@ -96,6 +103,7 @@ class TestAssembleRegression:
 # ===========================================================================
 # 2. dTheta_ss/dbeta vs. central finite differences
 # ===========================================================================
+
 
 def theta_ss_at(k_ads, k_des, eps, kbt):
     builder = make_builder(k_ads=k_ads, k_des=k_des, eps=eps, kbt=kbt)
@@ -133,7 +141,9 @@ class TestBetaDerivative:
 
         # error should shrink by ~100x when h shrinks by 10x (quadratic FD error)
         for e_prev, e_next in zip(errors, errors[1:]):
-            assert e_next < e_prev / 20, f"errors did not converge quadratically: {errors}"
+            assert e_next < e_prev / 20, (
+                f"errors did not converge quadratically: {errors}"
+            )
         assert errors[-1] < 1e-6
 
     def test_noninteracting_baseline(self):
@@ -151,6 +161,7 @@ class TestBetaDerivative:
 # ===========================================================================
 # 3. dTheta_ss/d(lnC) vs. central finite differences
 # ===========================================================================
+
 
 class TestLnCDerivative:
     @pytest.mark.parametrize("eps", [0.0, 0.5])
@@ -175,13 +186,16 @@ class TestLnCDerivative:
             errors.append(np.linalg.norm(dTheta_fd - dTheta_analytic))
 
         for e_prev, e_next in zip(errors, errors[1:]):
-            assert e_next < e_prev / 20, f"errors did not converge quadratically: {errors}"
+            assert e_next < e_prev / 20, (
+                f"errors did not converge quadratically: {errors}"
+            )
         assert errors[-1] < 1e-6
 
 
 # ===========================================================================
 # 4. Coverage derivative cross-check (eq. 5) -- coverage_mean() needs no new code
 # ===========================================================================
+
 
 class TestCoverageDerivative:
     def test_coverage_dbeta_matches_fd(self):
@@ -213,6 +227,7 @@ class TestCoverageDerivative:
 # 5. Production rate (eq. 4/6)
 # ===========================================================================
 
+
 class TestProductionRate:
     def test_langmuir_closed_form(self):
         """Noninteracting Langmuir: r_des = k_des * theta_A (intensive, per site)."""
@@ -232,7 +247,9 @@ class TestProductionRate:
         def k_des_at(beta):
             return k_des0 * np.exp(-beta * Ea)
 
-        builder = make_builder(k_ads=k_ads, k_des=k_des_at(beta0), eps=eps, kbt=1.0 / beta0)
+        builder = make_builder(
+            k_ads=k_ads, k_des=k_des_at(beta0), eps=eps, kbt=1.0 / beta0
+        )
         Wbar = to_steady_state_form(assemble_W(builder))
         Theta_ss, lu = solve_steady_state(Wbar)
 
@@ -272,7 +289,9 @@ class TestProductionRate:
         def k_des_at(beta):
             return k_des0 * np.exp(-beta * Ea)
 
-        builder = make_builder(k_ads=k_ads, k_des=k_des_at(beta0), eps=0.0, kbt=1.0 / beta0)
+        builder = make_builder(
+            k_ads=k_ads, k_des=k_des_at(beta0), eps=0.0, kbt=1.0 / beta0
+        )
         Wbar = to_steady_state_form(assemble_W(builder))
         Theta_ss, lu = solve_steady_state(Wbar)
 
@@ -285,7 +304,9 @@ class TestProductionRate:
         stoich = np.array([0.0, 1.0])  # des
         r_P = production_rate(builder, Theta_ss, stoich)
         dr_P_dbeta_vec = production_rate_dbeta_vector(builder, stoich, dk_dbeta)
-        dr_P = production_rate_derivative(builder, Theta_ss, dTheta, stoich, dr_P_dbeta_vec)
+        dr_P = production_rate_derivative(
+            builder, Theta_ss, dTheta, stoich, dr_P_dbeta_vec
+        )
 
         Ea_eff = -dr_P / r_P
         assert abs(Ea_eff - Ea) < 1e-3, f"Ea_eff={Ea_eff}, expected ~{Ea}"

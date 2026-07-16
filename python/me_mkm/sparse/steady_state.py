@@ -1,7 +1,7 @@
 """
 Solve the master equation for its stationary distribution.
 
-Given a generator W (from me_mkm.generator), find the steady-state distribution
+Given a generator W (from me_mkm.sparse.generator), find the steady-state distribution
 Theta_ss and its derivatives with respect to a control parameter.
 
 This is a shortcut helper: You can do this using just what is avaiable in generator.py

@@ -1,10 +1,9 @@
 """
-Exports ME-MKM coverage-class transition graphs to JSON for memkm_viewer.html.
-If omitted, defaults to ['*', 'A*', 'B*', ...].
+Exports ME-MKM coverage-class transition graphs to JSON for memkm_viewer.html
 """
 
-from me_mkm._me_mkm import decode_state
-from me_mkm.microstates import coverage_classes
+from me_mkm.microstates import coverage_classes, pattern_delta_counts
+from me_mkm.observables import class_average_matches
 
 import json
 from importlib.resources import files
@@ -167,28 +166,6 @@ def site_positions(l, topology=None):
     return {i: [0, i] for i in range(l)}
 
 
-def verify_uniformity(builder, groups, flat_reactions):
-    """Check that every reaction's reactive-match count is constant within each
-    coverage class (so a single per-class multiplier is well defined).
-
-    groups maps a coverage-class counts-tuple to that class's microstate
-    indices (from me_mkm.microstates.coverage_classes). The reactive counting is
-    done in Rust via builder.count_reactive.
-    """
-    base = builder.n_species
-    for key, indices in groups.items():
-        for rxn in flat_reactions:
-            counts = {
-                builder.count_reactive(
-                    decode_state(int(idx), builder.l, base), rxn["pattern_in"]
-                )
-                for idx in indices
-            }
-            if len(counts) > 1:
-                return False, key, rxn["name"]
-    return True, None, None
-
-
 def tex_name(s):
     """Convert species name to KaTeX math. '*' → '{*}', 'A*' → r'\text{A}^{*}'."""
     if s == "*":
@@ -236,20 +213,7 @@ def make_equation(pattern_in, pattern_out, all_species, rate_fwd=None, rate_bwd=
     return f"{lhs} {arrow} {rhs}"
 
 
-def delta_counts_from_patterns(pattern_in, pattern_out, n_ads):
-    delta = [0] * n_ads
-    for s_in, s_out in zip(pattern_in, pattern_out):
-        if s_in != s_out:
-            if s_in > 0:
-                delta[s_in - 1] -= 1
-            if s_out > 0:
-                delta[s_out - 1] += 1
-    return delta
-
-
-def build_graph(
-    builder, display_reactions=None, species_names=None, title=None, node_colors=None
-):
+def build_graph(builder, display_reactions=None, title=None, node_colors=None, Theta=None):
     """
     Build the coverage-class transition graph from an MEMKMBuilder.
 
@@ -260,13 +224,14 @@ def build_graph(
         the reaction list.
     display_reactions : list of dict, optional
         Override how reactions appear in the viewer.  See module docstring.
-    species_names : list of str, optional
-        Full species list including the empty site as index 0.
-        Length must be n_ads + 1.  Defaults to ['*', 'A*', 'B*', ...].
-        This matches the convention of me_mkm.observables.coverage_mean().
     title : str, optional
     node_colors : dict, optional
         Map from counts-tuple to CSS colour string.
+    Theta : array over microstates, optional
+        Weight the edge multipliers by a solved distribution: each class's
+        multiplier becomes the Theta-conditional expected match count instead
+        of the plain average over class members (see
+        observables.class_average_matches).
     """
     l = builder.l
     n_ads = builder.n_species - 1  # species 1..n_species-1 (index 0 is the reference)
@@ -275,14 +240,12 @@ def build_graph(
 
     # species_names has the reference species at index 0; default to the
     # builder's own names.
-    if species_names is None:
-        all_species = list(builder.species_names)
-    elif len(species_names) == n_ads + 1:
-        all_species = list(species_names)
+    all_species = list(builder.species_names)
+
+    if "*" in all_species:  # Explicitly the empty site
+        adsorbate_names = all_species[1:]  # for coverage-class labels
     else:
-        # Adsorbate-only list passed — prepend the index-0 reference species
-        all_species = ["*"] + list(species_names)
-    adsorbate_names = all_species[1:]  # for coverage-class labels
+        adsorbate_names = all_species
 
     reactions = (
         display_reactions
@@ -363,12 +326,20 @@ def build_graph(
             }
         )
 
-    ok, bad_key, bad_rxn = verify_uniformity(builder, groups, flat)
-    if not ok:
-        print(
-            f'WARNING: class {bad_key} rxn "{bad_rxn}" non-uniform — '
-            f"edge multipliers are averages over the coverage class"
-        )
+    # Per-class edge multipliers, one dict per flat reaction. The class-rate
+    # math (and the optional Theta weighting) lives in
+    # observables.class_average_matches; here we only report non-uniformity.
+    multipliers = []
+    ok = True
+    for rxn in flat:
+        avg, nonuniform = class_average_matches(builder, rxn["pattern_in"], Theta)
+        multipliers.append(avg)
+        if nonuniform and ok:
+            ok = False
+            print(
+                f'WARNING: class {nonuniform[0]} rxn "{rxn["name"]}" non-uniform — '
+                f"edge multipliers are averages over the coverage class"
+            )
 
     def canonical(counts):
         state = []
@@ -377,22 +348,8 @@ def build_graph(
         state += [0] * (l - sum(counts))
         return state
 
-    def avg_pairs(counts, rxn):
-        # Uniform classes (the common case): one representative state suffices.
-        # Non-uniform: average the reactive count over every state in the class.
-        if ok:
-            return builder.count_reactive(canonical(counts), rxn["pattern_in"])
-        base = builder.n_species
-        indices = groups[counts]
-        return sum(
-            builder.count_reactive(
-                decode_state(int(idx), builder.l, base), rxn["pattern_in"]
-            )
-            for idx in indices
-        ) / len(indices)
-
     def is_absorbing(counts):
-        return all(avg_pairs(counts, r) == 0 for r in flat)
+        return all(m[counts] == 0 for m in multipliers)
 
     def default_color(counts, absorp):
         if absorp:
@@ -422,8 +379,8 @@ def build_graph(
         absorp = is_absorbing(counts)
         col = (node_colors or {}).get(counts, default_color(counts, absorp))
         rxn_pairs = {
-            r["name"] + ":" + r["direction"]: round(avg_pairs(counts, r), 4)
-            for r in flat
+            r["name"] + ":" + r["direction"]: round(m[counts], 4)
+            for r, m in zip(flat, multipliers)
         }
         counts_label = ", ".join(
             f"n({adsorbate_names[i]})={c}" for i, c in enumerate(counts)
@@ -446,10 +403,10 @@ def build_graph(
 
     ei = 0
     for counts in STATES:
-        for rxn in flat:
-            n = avg_pairs(counts, rxn)
+        for rxn, m in zip(flat, multipliers):
+            n = m[counts]
             if n > 0:
-                dc = delta_counts_from_patterns(
+                dc = pattern_delta_counts(
                     rxn["pattern_in"], rxn["pattern_out"], n_ads
                 )
                 dst = tuple(c + dc[i] for i, c in enumerate(counts))

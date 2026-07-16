@@ -358,29 +358,7 @@ const LOOP_LAYOUT = {
   radialStep: 22,
 };
 
-// Optional manual overrides keyed by edge id.  Example:
-// const LOOP_OVERRIDES = {
-//   'edge_12': { direction: -170, sweep: 52, step: 62, labelY: -10 },
-//   'edge_13': { direction:  -10, sweep: 52, step: 84, labelY: -10 },
-// };
 const LOOP_OVERRIDES = {};
-
-// Optional geometry overrides for ANY edge, keyed by edge id.  A manually
-// controlled connection uses Cytoscape's `unbundled-bezier` curve so each edge
-// can have its own control point(s), independent of parallel edges.
-//
-// A single-control-point example:
-// const EDGE_OVERRIDES = {
-//   'edge_7': { distances: 70, weights: 0.50, labelY: -8 },
-//   'edge_8': { distances: -70, weights: 0.50, labelY: 8 },
-// };
-//
-// Multiple control points are also supported:
-//   { distances: [45, -35], weights: [0.30, 0.72] }
-//
-// The same values can be supplied per edge in the JSON with fields:
-//   curve_style, control_point_distances, control_point_weights,
-//   edge_label_x, edge_label_y, source_distance, target_distance.
 const EDGE_OVERRIDES = {};
 
 function finiteNumber(value, fallback = null) {
@@ -1008,7 +986,7 @@ function load(data) {
 
   const warn = document.getElementById('warn');
   warn.style.display = m.uniform ? 'none' : 'block';
-  warn.textContent = '⚠ Coverage classes are not uniform for this tile — multipliers are averages.';
+  warn.textContent = '⚠ Coverage classes are not uniform for this tile! Multipliers are averages of the .';
 
   // ── Reaction network panel ─────────────────────────────────────────────────
   document.getElementById('rxn-panel').innerHTML = (G.display_reactions || []).map(r =>
@@ -1142,7 +1120,7 @@ function load(data) {
     const hasManualCurve = !loop && Boolean(distances || weights || requestedStyle);
     const curveStyle = hasManualCurve
       ? (requestedStyle || 'unbundled-bezier')
-      : 'straight';
+      : 'bezier';
     let edgeClasses = '';
     const initialWeights = weights ? weights.split(/\s+/).map(Number).filter(Number.isFinite) : [];
     const initialDistances = distances ? distances.split(/\s+/).map(Number).filter(Number.isFinite) : [];
@@ -1217,7 +1195,8 @@ function load(data) {
         selector: 'edge',
         style: {
           'label':               'data(label)',
-          'curve-style':         'straight',
+          'curve-style':         'bezier',
+          'control-point-step-size': 40,
           'target-arrow-shape':  'triangle',
           'target-arrow-color':  'data(color)',
           'line-color':          'data(color)',
@@ -1233,7 +1212,7 @@ function load(data) {
         },
       },
       {
-        selector: 'edge[hasManualCurve]',
+        selector: 'edge[?hasManualCurve]',
         style: {
           'curve-style':                 'data(curveStyle)',
           'control-point-distances':     'data(controlPointDistances)',
@@ -1245,7 +1224,7 @@ function load(data) {
         },
       },
       {
-        selector: 'edge[isLoop]',
+        selector: 'edge[?isLoop]',
         style: {
           'curve-style':             'bezier',
           'loop-direction':          'data(loopDirection)',
@@ -1428,10 +1407,10 @@ function populateEdgeEditor(edgeEl) {
     nonLoop.classList.remove('hidden');
     loop.classList.add('hidden');
     curveRow.classList.remove('hidden');
-    const liveCurveStyle = hasInteractiveControlPoints(edgeEl) ? 'unbundled-bezier' : (d.curveStyle || 'straight');
+    const liveCurveStyle = hasInteractiveControlPoints(edgeEl) ? 'unbundled-bezier' : (d.curveStyle || 'bezier');
     const liveDistances = hasInteractiveControlPoints(edgeEl) ? numberList(interactiveDistances(edgeEl)) : (d.controlPointDistances || '');
     const liveWeights = hasInteractiveControlPoints(edgeEl) ? numberList(interactiveWeights(edgeEl)) : (d.controlPointWeights || '');
-    document.getElementById('edge-curve-style').value = liveCurveStyle || 'straight';
+    document.getElementById('edge-curve-style').value = liveCurveStyle || 'bezier';
     document.getElementById('edge-distances').value = liveDistances === '0' && !d.hasManualCurve ? '' : liveDistances;
     document.getElementById('edge-weights').value = liveWeights === '0.5' && !d.hasManualCurve ? '' : liveWeights;
     document.getElementById('edge-label-x').value = finiteNumber(d.edgeLabelX, 0);
@@ -1473,7 +1452,7 @@ function applyEditorToSelectedEdge() {
     const hasManual = Boolean(distances || weights || curveStyle !== 'bezier' || labelX || labelY || sourceDistance || targetDistance);
     edge.data({
       hasManualCurve: hasManual,
-      curveStyle: hasManual ? curveStyle : 'straight',
+      curveStyle: hasManual ? curveStyle : 'bezier',
       controlPointDistances: distances || '0',
       controlPointWeights: weights || '0.5',
       edgeLabelX: labelX,
@@ -1531,8 +1510,8 @@ function getEdgePatch(edgeId) {
     const defInteractive = Boolean(def.cyedgecontroleditingWeights && def.cyedgecontroleditingWeights.length);
     const defDist = defInteractive ? numberList(def.cyedgecontroleditingDistances) : numberList(def.controlPointDistances);
     const defWt = defInteractive ? numberList(def.cyedgecontroleditingWeights) : numberList(def.controlPointWeights);
-    const liveStyle = interactive ? 'unbundled-bezier' : (d.curveStyle || 'straight');
-    const defStyle = defInteractive ? 'unbundled-bezier' : (def.curveStyle || 'straight');
+    const liveStyle = interactive ? 'unbundled-bezier' : (d.curveStyle || 'bezier');
+    const defStyle = defInteractive ? 'unbundled-bezier' : (def.curveStyle || 'bezier');
 
     if (liveStyle !== defStyle) patch.curve_style = liveStyle;
     if (dist !== defDist) patch.control_point_distances = listStringToValue(dist);

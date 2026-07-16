@@ -958,7 +958,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
-    { name = "scipy" },
 ]
 
 [package.dev-dependencies]
@@ -967,14 +966,18 @@ dev = [
     { name = "notebook" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "scipy" },
     { name = "seaborn" },
+]
+scipy = [
+    { name = "scipy" },
+]
+tt = [
+    { name = "scikit-tt" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=2.5.0" },
-    { name = "scipy", specifier = ">=1.17" },
-]
+requires-dist = [{ name = "numpy", specifier = ">=2.5.0" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -982,8 +985,11 @@ dev = [
     { name = "notebook", specifier = ">=7.6.0" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "scipy", specifier = ">=1.17" },
     { name = "seaborn", specifier = ">=0.13.2" },
 ]
+scipy = [{ name = "scipy", specifier = ">=1.17" }]
+tt = [{ name = "scikit-tt", git = "https://github.com/PGelss/scikit_tt?rev=8f4b0a2420cbed8d56238f8751d920137a8f5a16" }]
 
 [[package]]
 name = "mistune"
@@ -1585,6 +1591,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/71/14edf065f04630b1a8472f7653cad03f6c478bcf95ea0e6aed55451e33ea/rpds_py-2026.6.3-cp315-cp315t-musllinux_1_2_x86_64.whl", hash = "sha256:23a439f31ccbeff1574e24889128821d1f7917470e830cf6544dced1c662262a", size = 576533, upload-time = "2026-06-30T07:17:28.546Z" },
     { url = "https://files.pythonhosted.org/packages/ba/76/65002b08596c389105720a8c0d22298b8dc25a4baf89b2ce431343c8b1de/rpds_py-2026.6.3-cp315-cp315t-win32.whl", hash = "sha256:913ca42ccad3f8cc6e292b587ae8ae49c8c823e5dce51a736252fc7c7cdfa577", size = 201204, upload-time = "2026-06-30T07:17:30.193Z" },
     { url = "https://files.pythonhosted.org/packages/8c/97/d855d6b3c322d1f27e26f5241c42016b56cf01377ea8ed348285f54652f0/rpds_py-2026.6.3-cp315-cp315t-win_amd64.whl", hash = "sha256:ae3d4fe8c0b9213624fdce7279d70e3b148b682ca20719ebd193a23ebfa47324", size = 220719, upload-time = "2026-06-30T07:17:31.788Z" },
+]
+
+[[package]]
+name = "scikit-tt"
+version = "1.0"
+source = { git = "https://github.com/PGelss/scikit_tt?rev=8f4b0a2420cbed8d56238f8751d920137a8f5a16#8f4b0a2420cbed8d56238f8751d920137a8f5a16" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
 ]
 
 [[package]]
