@@ -111,6 +111,43 @@ def _bound_pair(bound):
     return bound  # already (lo, hi)
 
 
+def coverage_basin_mask(builder: MEMKMBuilder, **bounds) -> np.ndarray:
+    """Length-n_states boolean mask selecting a coverage level-set basin, for use
+    as an A or B basin in the committor.
+
+    Same per-species coverage-bound semantics as microstate_coverage_query (a
+    scalar is an upper bound, a (lo, hi) pair bounds both sides with None open,
+    one keyword per species name); all constraints are ANDed. Unlike
+    microstate_coverage_query (which returns decoded state vectors), this returns
+    a boolean array index-aligned with a solved distribution Theta.
+
+    Example (CO oxidation, species ["*", "CO", "O"]):
+        in_B = coverage_basin_mask(builder, CO=(1.0, 1.0))  # CO-poisoned (full CO)
+        in_A = coverage_basin_mask(builder, CO=0.0)         # reactive (no CO)
+    """
+    name_to_code = {name: i for i, name in enumerate(builder.species_names)}
+    l = builder.l
+    n_species = builder.n_species
+    min_counts = [0] * n_species
+    max_counts = [l] * n_species
+    for name, bound in bounds.items():
+        code = name_to_code.get(name)
+        if code is None:
+            raise ValueError(
+                f"unknown species {name!r}; known: {builder.species_names}"
+            )
+        lo, hi = _bound_pair(bound)
+        if lo is not None:
+            min_counts[code] = max(min_counts[code], math.ceil(lo * l - _EPS))
+        if hi is not None:
+            max_counts[code] = min(max_counts[code], math.floor(hi * l + _EPS))
+    idxs = list(builder.select_states(min_counts, max_counts))
+    mask = np.zeros(builder.n_states, dtype=bool)
+    if idxs:
+        mask[np.asarray(idxs, dtype=int)] = True
+    return mask
+
+
 def microstate_coverage_query(
     builder: MEMKMBuilder, predicate=None, **bounds
 ) -> np.ndarray:

@@ -47,6 +47,10 @@ from me_mkm.tt.convert import (
     tt_to_dense,
     unit_tt,
 )
+from me_mkm.tt.committor import (
+    committor_tt,
+    committor_tt_residual,
+)
 from me_mkm.tt.observables import (
     coverage_distribution_tt,
     coverage_mean_tt,
@@ -92,4 +96,7 @@ __all__ = [
     "coverage_mean_tt",
     "production_rate_tt",
     "coverage_distribution_tt",
+    # committor
+    "committor_tt",
+    "committor_tt_residual",
 ]

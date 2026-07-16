@@ -1,21 +1,15 @@
 """
 Physical quantities from a solved distribution.
-
-Reduce a stationary (or time-resolved) distribution Theta over microstates to
-the numbers you actually report: per-species coverages, coverage histograms,
-and class averages. Also builds independent-site initial conditions (the
-inverse direction: coverage -> Theta). Everything here is pure numpy
-combinatorics; the production-rate observables, which consume the sparse
-per-reaction W components, live in me_mkm.sparse.observables.
-
-All coverage sums are linear in Theta, so passing a derivative dTheta/dx in
-place of Theta yields the derivative of the observable directly.
 """
 
 import numpy as np
 
 from me_mkm._me_mkm import MEMKMBuilder
-from me_mkm.microstates import _decode_all, class_match_counts, coverage_classes
+from me_mkm.microstates import (
+    _decode_all,
+    class_match_counts,
+    coverage_classes,
+)
 
 
 def coverage_distribution(builder: MEMKMBuilder, Theta):
@@ -66,6 +60,46 @@ def class_average_matches(builder: MEMKMBuilder, pattern_in, Theta=None):
                 mean = (matches @ Theta[idxs]) / mass
         averages[key] = float(mean)
     return averages, nonuniform
+
+
+def committor_profile(builder: MEMKMBuilder, q, Theta=None):
+    """Coverage-class-resolved committor (p_fold) profile and its within-class
+    spread -- the reaction-coordinate diagnostic for a committor q (from
+    me_mkm.sparse.committor).
+
+    q     : committor over all microstates, index-aligned with Theta.
+    Theta : stationary distribution, for probability weighting within each class
+        (P[q | class]); if None, class members are weighted equally.
+
+    Returns (profile, spread), each a dict keyed by the class counts tuple:
+    - profile[counts] = mean committor of the class, E[q | class] -- the
+      p_fold value of that coverage.
+    - spread[counts]  = (weighted) variance of q within the class. A near-zero
+      spread means coverage locates the reaction well there; a large spread
+      means microstates of the same coverage have different fates, so coverage
+      is a poor reaction coordinate for that class (the Berezhkovskii-Szabo
+      test).
+    """
+    q = np.asarray(q, dtype=float)
+    if Theta is not None:
+        Theta = np.asarray(Theta, dtype=float)
+    profile, spread = {}, {}
+    for counts, idxs in coverage_classes(builder):
+        key = tuple(int(c) for c in counts)
+        qi = q[idxs]
+        if qi.size == 0:
+            profile[key], spread[key] = 0.0, 0.0
+            continue
+        w = Theta[idxs] if Theta is not None else None
+        if w is not None and w.sum() > 0.0:
+            wsum = w.sum()
+            mean = float((qi @ w) / wsum)
+            var = float((w @ (qi - mean) ** 2) / wsum)
+        else:
+            mean = float(qi.mean())
+            var = float(qi.var())
+        profile[key], spread[key] = mean, var
+    return profile, spread
 
 
 def coverage_mean(builder: MEMKMBuilder, Theta) -> np.ndarray:
