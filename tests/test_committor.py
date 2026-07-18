@@ -15,8 +15,8 @@ from me_mkm import (
     MEMKMBuilder,
     Reaction,
     TileSettings,
-    committor_profile,
-    coverage_basin_mask,
+    committor_class_profile,
+    microstate_mask,
 )
 from me_mkm.sparse import (
     build_W,
@@ -93,10 +93,10 @@ def test_committor_rejects_bad_basins():
 # ---------------------------------------------------------------------------
 
 
-def test_coverage_basin_mask_matches_manual():
+def test_microstate_mask_matches_manual():
     builder = _langmuir()
-    in_A = coverage_basin_mask(builder, A=0.0)  # no A -> all-empty state
-    in_B = coverage_basin_mask(builder, A=(1.0, 1.0))  # full A
+    in_A = microstate_mask(builder, A=(None, 0.0))  # no A -> all-empty state
+    in_B = microstate_mask(builder, A=(1.0, 1.0))  # full A
     manual_A = np.zeros(builder.n_states, bool)
     manual_A[0] = True
     manual_B = np.zeros(builder.n_states, bool)
@@ -105,14 +105,14 @@ def test_coverage_basin_mask_matches_manual():
     assert np.array_equal(in_B, manual_B)
 
 
-def test_committor_profile_basin_values_and_monotone():
+def test_committor_class_profile_basin_values_and_monotone():
     builder = _langmuir()
-    in_A = coverage_basin_mask(builder, A=0.0)
-    in_B = coverage_basin_mask(builder, A=(1.0, 1.0))
+    in_A = microstate_mask(builder, A=(None, 0.0))
+    in_B = microstate_mask(builder, A=(1.0, 1.0))
     W = build_W(builder, steady_state=False)
     q = committor(W, in_A, in_B)
 
-    profile, spread = committor_profile(builder, q)
+    profile, spread = committor_class_profile(builder, q)
     l = builder.l
     # basin classes pin to 0 and 1 with zero spread
     assert profile[(0,)] == pytest.approx(0.0)
@@ -194,8 +194,8 @@ def test_committor_tt_matches_dense():
     siteA = {p: e_star for p in range(l)}  # every site empty
     siteB = {p: e_full for p in range(l)}  # every site A
 
-    in_A = coverage_basin_mask(builder, A=0.0)
-    in_B = coverage_basin_mask(builder, A=(1.0, 1.0))
+    in_A = microstate_mask(builder, A=(None, 0.0))
+    in_B = microstate_mask(builder, A=(1.0, 1.0))
     q_dense = committor(build_W(builder, steady_state=False), in_A, in_B)
 
     W_tt = tt.build_W_tt(builder)

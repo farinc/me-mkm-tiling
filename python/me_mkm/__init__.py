@@ -8,15 +8,13 @@ from me_mkm._me_mkm import (
     encode_state,
 )
 from me_mkm.microstates import (
-    coverage_basin_mask,
+    microstate_mask,
     coverage_classes,
-    microstate_coverage,
-    microstate_coverage_query,
-    microstate_vectors,
+    microstate_as_coverage,
 )
 from me_mkm.observables import (
     class_average_matches,
-    committor_profile,
+    committor_class_profile,
     coverage_distribution,
     coverage_mean,
     independent_site_distribution,

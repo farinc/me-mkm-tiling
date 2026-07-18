@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from me_mkm import (
+    BepInteraction,
     InitialStateInteraction,
     MEMKMBuilder,
     Reaction,
@@ -35,12 +36,33 @@ FISH = TileSettings.square(sites=8, d=3)  # checkerboard-capable, 256 states
 HEX = TileSettings.hex(2)  # creamcups K_7, 128 states
 
 
-def langmuir(tile, eps=0.0):
-    """Single-adsorbate Langmuir builder with optional A-A interaction."""
-    im = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+def langmuir(tile, eps=0.0, omega=None):
+    """Single-adsorbate Langmuir builder. eps sets the A-A interaction; omega
+    (None -> InitialStateInteraction, float -> BepInteraction) picks the
+    scheme, so BEP's final-state / omega-weighted correction gets exercised."""
+    im = _interaction(eps, omega)
     reactions = [
         Reaction([0], [1], rate=1.3, name="ads"),
         Reaction([1], [0], rate=0.7, name="des"),
+    ]
+    return MEMKMBuilder(tile, reactions, ["*", "A"], im)
+
+
+def _interaction(eps, omega):
+    m = [[0.0, 0.0], [0.0, eps]]
+    return InitialStateInteraction(m) if omega is None else BepInteraction(m, omega)
+
+
+def interacting_dimer(tile, eps, omega=None):
+    """ads/des + dimerization where the pair reaction is under the SAME
+    interaction model (NOT overridden to noninteracting like build_system's),
+    so the reacting pair's mutual-bond term is exercised -- and for BEP, the
+    pair's final-state correction too."""
+    im = _interaction(eps, omega)
+    reactions = [
+        Reaction([0], [1], rate=100.0, name="ads"),
+        Reaction([1], [0], rate=1.0, name="des"),
+        Reaction([1, 1], [0, 0], rate=1.0, name="dimer"),
     ]
     return MEMKMBuilder(tile, reactions, ["*", "A"], im)
 
@@ -71,6 +93,15 @@ for tile, tname in [(GREEK, "greek"), (FISH, "fish"), (HEX, "hex")]:
 for tile, tname in [(GREEK, "greek"), (FISH, "fish")]:
     for K in (10.0, 1000.0):
         MPO_CASES.append((f"dimer-{tname}-K{K:g}", build_system(K, tile)))
+# BEP scheme (omega): order-1 correction now depends on the final species too
+for tile, tname in [(GREEK, "greek"), (HEX, "hex")]:
+    for eps, omega in [(0.6, 0.35), (-0.9, 0.7), (-0.9, 0.0), (0.6, 1.0)]:
+        MPO_CASES.append((f"bep-{tname}-eps{eps}-w{omega}", langmuir(tile, eps, omega)))
+# interacting PAIR reaction (not overridden): exercises the mutual-bond term,
+# under both the initial-state scheme and BEP (mutual + final-state).
+for tile, tname in [(GREEK, "greek"), (FISH, "fish")]:
+    MPO_CASES.append((f"idimer-{tname}-IS", interacting_dimer(tile, -0.9)))
+    MPO_CASES.append((f"idimer-{tname}-BEP", interacting_dimer(tile, 0.6, omega=0.4)))
 
 
 @pytest.mark.parametrize("name,builder", MPO_CASES, ids=[c[0] for c in MPO_CASES])
@@ -94,6 +125,9 @@ SOLVE_CASES = [
     ("dimer-greek-K100", build_system(100.0, GREEK)),
     # hard metastable point: checkerboard plateau, strong repulsion, small gap
     ("dimer-fish-plateau-K1000", build_system(1000.0, FISH)),
+    # BEP scheme and an interacting pair reaction (mutual bond)
+    ("bep-greek-repulsive", langmuir(GREEK, -0.9, omega=0.35)),
+    ("idimer-fish-BEP", interacting_dimer(FISH, 0.6, omega=0.5)),
 ]
 
 

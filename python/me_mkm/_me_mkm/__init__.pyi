@@ -101,15 +101,9 @@ class MEMKMBuilder:
     @property
     def n_species(self) -> builtins.int:
         r"""
-        Number of species, counting index 0. Equals the state-space base, so the
-        microstate count is n_species ** l. (There is no separate empty species
-        to add: index 0 is already one of the n_species.)
-        """
-    @property
-    def d(self) -> builtins.int:
-        r"""
-        Primary long-range offset; largest delta in the tile settings.
-        Kept for convenience and Adams 2025 validate().
+        Number of species. This counts any empty site as a
+        specie which in the papers this is not the case.
+        Its a practicality and generalization.
         """
     @property
     def n_rxns(self) -> builtins.int: ...
@@ -120,7 +114,6 @@ class MEMKMBuilder:
     def clear_reactions(self) -> None: ...
     def set_interaction(self, interaction: InitialStateInteraction | BepInteraction) -> None: ...
     def get_interaction(self) -> InitialStateInteraction | BepInteraction: ...
-    def validate(self) -> dict: ...
     def neighbor_pairs(self) -> builtins.list[tuple[builtins.int, builtins.int]]:
         r"""
         Undirected neighbor pairs (i < j), one entry per bond — the same
@@ -152,16 +145,11 @@ class MEMKMBuilder:
         builder does). Equals `-component.diagonal()` at unit rate; the graph
         exporter uses it as an edge multiplier.
         """
+    def get_all_microstates(self) -> builtins.list[builtins.list[builtins.int]]: ...
     def build_w_coo(self) -> tuple[builtins.list[builtins.int], builtins.list[builtins.int], builtins.list[builtins.float]]:
         r"""
         Full dynamical-form W as COO triples (rows, cols, vals); hand these
         straight to scipy.sparse on the Python side.
-        """
-    def build_w_ss_coo(self) -> tuple[builtins.list[builtins.int], builtins.list[builtins.int], builtins.list[builtins.float]]:
-        r"""
-        Same as build_w_coo, but with the last row swapped for the
-        normalisation condition (all 1s) so it's ready to solve for the
-        steady-state distribution directly.
         """
     def build_w_components_coo(self) -> builtins.list[tuple[builtins.list[builtins.int], builtins.list[builtins.int], builtins.list[builtins.float]]]:
         r"""
@@ -277,6 +265,24 @@ class TileSettings:
     @staticmethod
     def custom(sites: builtins.int, deltas: typing.Sequence[builtins.int]) -> TileSettings: ...
     @staticmethod
+    def validate_square(l: builtins.int, d: builtins.int) -> tuple[builtins.bool, builtins.bool, builtins.bool]:
+        r"""
+        Validate primary (l,d) brickwork pair against Adams et al. 2025 SI Figure S3.
+        
+        This is purely a geometric sanity check on the (ring length, offset)
+        pair, independent of whatever reactions get attached later:
+        - rule1: d=0 or d=l would make a site its own periodic neighbor.
+        - rule2: a valid square-lattice fold needs l even and d odd, so
+          stepping by d always flips parity.
+        - checkerboard: whether this (l, d) can additionally host a strict
+          alternating 2-coloring. This is stricter than rule2: d=1 is just
+          the brickwork's nearest-neighbor offset and adds no new bond
+          type, d=l-1 is d=1 read the other way around the ring, and
+          d=l/2 (even l) is its own mirror image (i+d and i-d land on the
+          same site). All three are valid square-lattice tiles (rule1 and
+          rule2 pass) but cannot represent the checkerboard superlattice.
+        """
+    @staticmethod
     def smallest_valid_square(sites: builtins.int, checkerboard: builtins.bool) -> typing.Optional[TileSettings]:
         r"""
         Smallest brickwork offset d (searched from d=1 up) for a ring of
@@ -294,15 +300,27 @@ class TileSettings:
         """
     def __repr__(self) -> builtins.str: ...
 
-def decode_state(microstate: builtins.int, l: builtins.int, base: builtins.int) -> builtins.list[builtins.int]:
+def decode_state(idx: builtins.int, l: builtins.int, base: builtins.int) -> builtins.list[builtins.int]:
     r"""
-    Given a microstate "number", you can decode it given the known base and tile length.
+    Decode a microstate index into its site vector.
+    
+    A tile microstate is a length-`l` vector with one entry per site, each in
+    `[0, base)` where `base` = n_species (species 0 is conventionally the
+    vacant/reference site). `idx` is that vector read as a base-`base`
+    positional integer with `site[0]` as the most significant digit and
+    `site[l-1]` as the least significant, i.e.
+    `idx = sum(site[i] * base^(l-1-i) for i in 0..l)`. This is the
+    base-(m+1) enumeration used in the paper to index all `base^l`
+    microstates as `idx in 0..n_states`. `l` and `base` are tile parameters
+    you must supply; they aren't recoverable from `idx` alone.
     """
 
-def encode_state(microstate: typing.Sequence[builtins.int], base: builtins.int) -> builtins.int:
+def encode_state(tile_microstate: typing.Sequence[builtins.int], base: builtins.int) -> builtins.int:
     r"""
-    Given a state vector for a tile of `l` sites, you can encode it into a
-    microstate "number" given the known base (number of species).
+    Encode a microstate site vector into its index (inverse of `decode_state`).
+    
+    `tile_microstate` is the length-`l` vector of per-site species in
+    `[0, base)`; see `decode_state` for the digit-order convention.
     """
 
 def state_counts(idx: builtins.int, l: builtins.int, base: builtins.int) -> builtins.list[builtins.int]: ...

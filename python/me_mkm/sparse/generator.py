@@ -22,11 +22,10 @@ def build_W(builder: MEMKMBuilder, steady_state: bool = True) -> sp.csc_array:
     transition matrix for solving the steady-state distribution. If steady_state is False,
     the full transition matrix is returned for debugging purposes.
     """
-    rows, cols, vals = (
-        builder.build_w_ss_coo() if steady_state else builder.build_w_coo()
-    )
+    rows, cols, vals = builder.build_w_coo()
     n = builder.n_states
-    return sp.csc_array((vals, (rows, cols)), shape=(n, n))
+    W = sp.csc_array((vals, (rows, cols)), shape=(n, n))
+    return to_steady_state_form(W) if steady_state else W
 
 
 def build_W_components(builder: MEMKMBuilder) -> list:

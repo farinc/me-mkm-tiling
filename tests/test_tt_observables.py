@@ -9,6 +9,7 @@ import pytest
 import scipy.sparse as sp
 
 from me_mkm import (
+    BepInteraction,
     InitialStateInteraction,
     MEMKMBuilder,
     Reaction,
@@ -32,11 +33,24 @@ GREEK = TileSettings.square(sites=5, d=2)
 FISH = TileSettings.square(sites=8, d=3)
 
 
-def langmuir(tile, eps=0.0, k_ads=1.3, k_des=0.7):
-    im = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+def langmuir(tile, eps=0.0, k_ads=1.3, k_des=0.7, omega=None):
+    m = [[0.0, 0.0], [0.0, eps]]
+    im = InitialStateInteraction(m) if omega is None else BepInteraction(m, omega)
     reactions = [
         Reaction([0], [1], rate=k_ads, name="ads"),
         Reaction([1], [0], rate=k_des, name="des"),
+    ]
+    return MEMKMBuilder(tile, reactions, ["*", "A"], im)
+
+
+def interacting_dimer(tile, eps, omega=None):
+    """ads/des + dimerization under one interaction model (interacting pair)."""
+    m = [[0.0, 0.0], [0.0, eps]]
+    im = InitialStateInteraction(m) if omega is None else BepInteraction(m, omega)
+    reactions = [
+        Reaction([0], [1], rate=100.0, name="ads"),
+        Reaction([1], [0], rate=1.0, name="des"),
+        Reaction([1, 1], [0, 0], rate=1.0, name="dimer"),
     ]
     return MEMKMBuilder(tile, reactions, ["*", "A"], im)
 
@@ -45,10 +59,21 @@ def langmuir(tile, eps=0.0, k_ads=1.3, k_des=0.7):
 # 1. dW/dbeta MPO vs Rust components
 # ===========================================================================
 
+# (eps, omega): omega=None is the initial-state scheme; a float is BEP, whose
+# delta_e = omega*(S_in - S_out) makes dW/dbeta depend on the final state too.
+# The interacting-dimer cases also exercise the mutual-bond derivative term.
+DW_DBETA_CASES = [
+    langmuir(GREEK, 0.6),
+    langmuir(GREEK, -0.9),
+    langmuir(GREEK, 0.6, omega=0.35),
+    langmuir(GREEK, -0.9, omega=0.7),
+    interacting_dimer(GREEK, -0.9),
+    interacting_dimer(GREEK, 0.6, omega=0.4),
+]
 
-@pytest.mark.parametrize("eps", [0.6, -0.9])
-def test_dW_dbeta_tt_matches_components(eps):
-    builder = langmuir(GREEK, eps)
+
+@pytest.mark.parametrize("builder", DW_DBETA_CASES)
+def test_dW_dbeta_tt_matches_components(builder):
     comps = build_dW_dbeta_components(builder)
     rates = [r.rate for r in builder.get_reactions()]
     dW_dense = sum(k * c for k, c in zip(rates, comps)).toarray()

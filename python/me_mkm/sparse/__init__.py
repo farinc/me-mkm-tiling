@@ -52,6 +52,9 @@ from me_mkm.sparse.committor import (
     committor,
     committor_backward,
 )
+from me_mkm.sparse.metastable import (
+    quasi_stationary_distribution,
+)
 from me_mkm.sparse.steady_state import (
     solve_steady_state,
     steady_state_derivative,

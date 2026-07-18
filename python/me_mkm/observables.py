@@ -6,7 +6,6 @@ import numpy as np
 
 from me_mkm._me_mkm import MEMKMBuilder
 from me_mkm.microstates import (
-    _decode_all,
     class_match_counts,
     coverage_classes,
 )
@@ -62,11 +61,10 @@ def class_average_matches(builder: MEMKMBuilder, pattern_in, Theta=None):
     return averages, nonuniform
 
 
-def committor_profile(builder: MEMKMBuilder, q, Theta=None):
-    """Coverage-class-resolved committor (p_fold) profile and its within-class
-    spread -- the reaction-coordinate diagnostic for a committor q (from
-    me_mkm.sparse.committor).
-
+def committor_class_profile(builder: MEMKMBuilder, q, Theta_ss=None):
+    """Committor probabilities resolved for all coverage classes. Computes the
+    average committor probability of each class followed by the weighted varience
+    of the commitor probability.
     q     : committor over all microstates, index-aligned with Theta.
     Theta : stationary distribution, for probability weighting within each class
         (P[q | class]); if None, class members are weighted equally.
@@ -81,8 +79,8 @@ def committor_profile(builder: MEMKMBuilder, q, Theta=None):
       test).
     """
     q = np.asarray(q, dtype=float)
-    if Theta is not None:
-        Theta = np.asarray(Theta, dtype=float)
+    if Theta_ss is not None:
+        Theta_ss = np.asarray(Theta_ss, dtype=float)
     profile, spread = {}, {}
     for counts, idxs in coverage_classes(builder):
         key = tuple(int(c) for c in counts)
@@ -90,7 +88,7 @@ def committor_profile(builder: MEMKMBuilder, q, Theta=None):
         if qi.size == 0:
             profile[key], spread[key] = 0.0, 0.0
             continue
-        w = Theta[idxs] if Theta is not None else None
+        w = Theta_ss[idxs] if Theta_ss is not None else None
         if w is not None and w.sum() > 0.0:
             wsum = w.sum()
             mean = float((qi @ w) / wsum)
@@ -104,7 +102,7 @@ def committor_profile(builder: MEMKMBuilder, q, Theta=None):
 
 def coverage_mean(builder: MEMKMBuilder, Theta) -> np.ndarray:
     """
-    Per-species mean coverage or coverage derivative dTheta_ss/dx from Theta, the
+    Per-species mean coverage or mean coverage derivative (dTheta_ss/dx from Theta), the
     distribution over all microstates, as an array indexed by species code as given
     from builder.
 
@@ -112,7 +110,11 @@ def coverage_mean(builder: MEMKMBuilder, Theta) -> np.ndarray:
     result gains a matching trailing axis.
     """
     Theta = np.asarray(Theta)
-    states = _decode_all(builder)  # (n_states, l)
+    # get_all_microstates returns bytes rows (pyo3's mapping for Vec<u8>), so
+    # each row must be unpacked with list() before np.asarray can build an int array.
+    states = np.array(
+        [list(row) for row in builder.get_all_microstates()], dtype=int
+    )  # (n_states, l)
     counts = np.stack([(states == s).sum(axis=1) for s in range(builder.n_species)])
     return (counts @ Theta) / builder.l  # (base,) or (base, n_t)
 
@@ -134,4 +136,5 @@ def independent_site_distribution(builder: MEMKMBuilder, coverage) -> np.ndarray
 
     # Site-independent product Theta0[s] = prod_j p[site_j]; p[states] maps each
     # site to its marginal probability, then the row product gives the state's.
-    return np.prod(p[_decode_all(builder)], axis=1)
+    states = np.array([list(row) for row in builder.get_all_microstates()], dtype=int)
+    return np.prod(p[states], axis=1)

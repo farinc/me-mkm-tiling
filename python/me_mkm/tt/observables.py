@@ -78,7 +78,7 @@ def production_rate_tt(builder: MEMKMBuilder, theta_tt: TT, stoich) -> float:
     diagonal."""
     stoich = np.asarray(stoich, dtype=float)
     total = 0.0
-    for ri, weight, factors, _ in _event_terms(builder):
+    for ri, weight, factors, _, _ in _event_terms(builder):
         nu = stoich[ri]
         if nu == 0.0:
             continue

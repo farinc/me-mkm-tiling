@@ -1,11 +1,7 @@
 """
-Committor (splitting probability, p_fold) from the ME-MKM generator.
-
+Committor probabilties for the ME-MKM generator.
 The committor q[i] is the probability of reaching basin B before basin A,
-starting from microstate i. Unlike the coverage/production observables --
-which are linear functionals <probe, Theta> of a solved distribution -- the
-committor is its own linear solve on the backward generator, so it lives here
-beside solve_steady_state rather than in the observables modules.
+starting from microstate i.
 
 It solves the backward equation on the interior (states in neither basin):
 
@@ -16,12 +12,11 @@ Berezhkovskii et al.; Noe et al. 2009 PNAS)
 
     (W^T)_II q_I = -(W^T)_IB 1.
 
-W is the *dynamical* generator in this codebase's column convention
-(W[to, from], columns sum to zero) -- build_W(builder, steady_state=False),
+W is the general (non-normalized) generator in this codebase's column convention
 NOT the steady-state form whose last row is the normalisation condition.
 
 Basin masks (in_A, in_B) are length-n_states boolean arrays; build them from
-coverage level sets with me_mkm.microstates.coverage_basin_mask.
+coverage level sets with me_mkm.microstates.microstate_mask.
 """
 
 import numpy as np
@@ -32,8 +27,8 @@ from scipy.sparse.linalg import spsolve
 def committor(W, in_A, in_B) -> np.ndarray:
     """Forward committor q over all microstates: q[i] = P(reach B before A | i).
 
-    W       : dynamical generator, column convention (build_W(..., steady_state=False)).
-    in_A/in_B : length-n boolean basin masks; q = 0 on A, q = 1 on B.
+    W         : dynamical generator
+    in_A/in_B : length-n boolean microstate masks from microstate_mask; q = 0 on A, q = 1 on B.
 
     Returns q, a length-n array (0 on A, 1 on B, the interior solve elsewhere).
     """

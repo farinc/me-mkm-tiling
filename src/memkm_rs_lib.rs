@@ -3,7 +3,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pyme
 
 #[inline]
 fn decode(mut microstate: usize, l: usize, base: usize) -> Vec<u8> {
-    let mut digits = vec![0u8; l];
+    let mut digits = vec![0u8; l as usize];
     for d in digits.iter_mut().rev() {
         *d = (microstate % base) as u8;
         microstate /= base;
@@ -15,19 +15,31 @@ fn decode(mut microstate: usize, l: usize, base: usize) -> Vec<u8> {
 fn encode(state: &[u8], base: usize) -> usize {
     state.iter().fold(0usize, |acc, &d| acc * base + d as usize)
 }
-/// Given a microstate "number", you can decode it given the known base and tile length.
+/// Decode a microstate index into its site vector.
+///
+/// A tile microstate is a length-`l` vector with one entry per site, each in
+/// `[0, base)` where `base` = n_species (species 0 is conventionally the
+/// vacant/reference site). `idx` is that vector read as a base-`base`
+/// positional integer with `site[0]` as the most significant digit and
+/// `site[l-1]` as the least significant, i.e.
+/// `idx = sum(site[i] * base^(l-1-i) for i in 0..l)`. This is the
+/// base-(m+1) enumeration used in the paper to index all `base^l`
+/// microstates as `idx in 0..n_states`. `l` and `base` are tile parameters
+/// you must supply; they aren't recoverable from `idx` alone.
 #[gen_stub_pyfunction]
 #[pyfunction]
-fn decode_state(microstate: usize, l: usize, base: usize) -> Vec<u8> {
-    decode(microstate, l, base)
+fn decode_state(idx: usize, l: usize, base: usize) -> Vec<u8> {
+    decode(idx, l, base)
 }
 
-/// Given a state vector for a tile of `l` sites, you can encode it into a
-/// microstate "number" given the known base (number of species).
+/// Encode a microstate site vector into its index (inverse of `decode_state`).
+///
+/// `tile_microstate` is the length-`l` vector of per-site species in
+/// `[0, base)`; see `decode_state` for the digit-order convention.
 #[gen_stub_pyfunction]
 #[pyfunction]
-fn encode_state(microstate: Vec<u8>, base: usize) -> usize {
-    encode(&microstate, base)
+fn encode_state(tile_microstate: Vec<u8>, base: usize) -> usize {
+    encode(&tile_microstate, base)
 }
 
 #[inline]
@@ -573,6 +585,28 @@ impl TileSettings {
     }
 
     #[staticmethod]
+    /// Validate primary (l,d) brickwork pair against Adams et al. 2025 SI Figure S3.
+    ///
+    /// This is purely a geometric sanity check on the (ring length, offset)
+    /// pair, independent of whatever reactions get attached later:
+    /// - rule1: d=0 or d=l would make a site its own periodic neighbor.
+    /// - rule2: a valid square-lattice fold needs l even and d odd, so
+    ///   stepping by d always flips parity.
+    /// - checkerboard: whether this (l, d) can additionally host a strict
+    ///   alternating 2-coloring. This is stricter than rule2: d=1 is just
+    ///   the brickwork's nearest-neighbor offset and adds no new bond
+    ///   type, d=l-1 is d=1 read the other way around the ring, and
+    ///   d=l/2 (even l) is its own mirror image (i+d and i-d land on the
+    ///   same site). All three are valid square-lattice tiles (rule1 and
+    ///   rule2 pass) but cannot represent the checkerboard superlattice.
+    pub fn validate_square(l: usize, d: usize) -> (bool, bool, bool) {
+        let rule1 = d != 0 && d != l;
+        let rule2 = l % 2 == 0 && d % 2 == 1;
+        let checkerboard = rule1 && rule2 && d != 1 && d != l - 1 && d != l / 2;
+        (rule1, rule2, checkerboard)
+    }
+
+    #[staticmethod]
     /// Smallest brickwork offset d (searched from d=1 up) for a ring of
     /// `sites` sites that is fully valid per Tile::validate: rule1, rule2,
     /// AND checkerboard-capable (Adams et al. 2025 SI Figure S3) if requested.
@@ -580,7 +614,7 @@ impl TileSettings {
     pub fn smallest_valid_square(sites: usize, checkerboard: bool) -> Option<Self> {
         (1..sites)
             .find(|&d| {
-                let (rule1, rule2, chkbrd) = Tile::validate(sites, d);
+                let (rule1, rule2, chkbrd) = TileSettings::validate_square(sites, d);
                 rule1 && rule2 && chkbrd == checkerboard
             })
             .map(|d| Self::square(sites, d))
@@ -627,7 +661,7 @@ impl Tile {
     // one canonical (i, j) per bond rather than every directed (i, j)/(j, i).
     fn new(tilesettings: &TileSettings, base: usize) -> Self {
         let l = tilesettings.sites;
-        let n_states = base.pow(l as u32);
+        let n_states = base.pow(l as u32) as usize;
         let mut neighbors = vec![vec![]; l];
         let mut pair_set = std::collections::HashSet::new();
         for i in 0..l {
@@ -653,27 +687,6 @@ impl Tile {
             neighbors,
             neighbor_pairs,
         }
-    }
-
-    /// Validate primary (l,d) brickwork pair against Adams et al. 2025 SI Figure S3.
-    ///
-    /// This is purely a geometric sanity check on the (ring length, offset)
-    /// pair, independent of whatever reactions get attached later:
-    /// - rule1: d=0 or d=l would make a site its own periodic neighbor.
-    /// - rule2: a valid square-lattice fold needs l even and d odd, so
-    ///   stepping by d always flips parity.
-    /// - checkerboard: whether this (l, d) can additionally host a strict
-    ///   alternating 2-coloring. This is stricter than rule2: d=1 is just
-    ///   the brickwork's nearest-neighbor offset and adds no new bond
-    ///   type, d=l-1 is d=1 read the other way around the ring, and
-    ///   d=l/2 (even l) is its own mirror image (i+d and i-d land on the
-    ///   same site). All three are valid square-lattice tiles (rule1 and
-    ///   rule2 pass) but cannot represent the checkerboard superlattice.
-    fn validate(l: usize, d: usize) -> (bool, bool, bool) {
-        let rule1 = d != 0 && d != l;
-        let rule2 = l % 2 == 0 && d % 2 == 1;
-        let checkerboard = rule1 && rule2 && d != 1 && d != l - 1 && d != l / 2;
-        (rule1, rule2, checkerboard)
     }
 }
 
@@ -765,19 +778,12 @@ impl MEMKMBuilder {
         self.tile_settings.sites
     }
 
-    /// Number of species, counting index 0. Equals the state-space base, so the
-    /// microstate count is n_species ** l. (There is no separate empty species
-    /// to add: index 0 is already one of the n_species.)
+    /// Number of species. This counts any empty site as a
+    /// specie which in the papers this is not the case.
+    /// Its a practicality and generalization.
     #[getter]
     pub fn n_species(&self) -> usize {
         self.species_names.len()
-    }
-
-    /// Primary long-range offset; largest delta in the tile settings.
-    /// Kept for convenience and Adams 2025 validate().
-    #[getter]
-    pub fn d(&self) -> usize {
-        self.tile_settings.d()
     }
 
     // Mutators only swap the reaction list; species_names (and thus the state
@@ -806,33 +812,6 @@ impl MEMKMBuilder {
     }
     pub fn get_interaction(&self) -> Box<dyn InteractionModel> {
         self.interaction.clone()
-    }
-
-    // Thin wrapper around Tile::validate that turns the (bool, bool, bool)
-    // tuple into a Python dict with a human-readable "note" explaining
-    // which rule failed first (rule1 takes priority over rule2, which
-    // takes priority over checkerboard), so callers in Python don't have
-    // to remember the rule ordering themselves.
-    pub fn validate<'py>(&self, py: Python<'py>) -> Bound<'py, pyo3::types::PyDict> {
-        let (r1, r2, cb) = Tile::validate(self.tile_settings.sites, self.tile_settings.d());
-        let dict = pyo3::types::PyDict::new(py);
-        dict.set_item("rule1_ok", r1).unwrap();
-        dict.set_item("rule2_ok", r2).unwrap();
-        dict.set_item("checkerboard", cb).unwrap();
-        dict.set_item(
-            "note",
-            if !r1 {
-                "Violates rule 1: site abuts its own periodic image"
-            } else if !r2 {
-                "Violates rule 2: needs l even and d odd for a valid square-lattice fold"
-            } else if !cb {
-                "Valid Tile but cannot represent checkerboard superlattice"
-            } else {
-                "Fully valid: satisfies both rules and supports checkerboard"
-            },
-        )
-        .unwrap();
-        dict
     }
 
     /// Undirected neighbor pairs (i < j), one entry per bond — the same
@@ -914,17 +893,16 @@ impl MEMKMBuilder {
         }
     }
 
+    pub fn get_all_microstates(&self) -> Vec<Vec<u8>> {
+        (0..self.tile.n_states)
+            .map(|idx| decode(idx, self.tile.l, self.tile.base))
+            .collect()
+    }
+
     /// Full dynamical-form W as COO triples (rows, cols, vals); hand these
     /// straight to scipy.sparse on the Python side.
     pub fn build_w_coo(&self) -> (Vec<i32>, Vec<i32>, Vec<f64>) {
         self.compute_w_coo()
-    }
-
-    /// Same as build_w_coo, but with the last row swapped for the
-    /// normalisation condition (all 1s) so it's ready to solve for the
-    /// steady-state distribution directly.
-    pub fn build_w_ss_coo(&self) -> (Vec<i32>, Vec<i32>, Vec<f64>) {
-        self.compute_w_ss_coo()
     }
 
     /// One dynamical-form W matrix per reaction, each built at rate=1.
@@ -1051,7 +1029,7 @@ impl MEMKMBuilder {
         (rows, cols, vals, diag)
     }
 
-    /// Dynamical W: diagonal = -sum of outgoing rates.
+    /// W: diagonal = -sum of outgoing rates.
     ///
     /// compute_offdiag's output plus the diag vector appended as the matrix
     /// diagonal; the full W at each reaction's current rate.
@@ -1275,43 +1253,6 @@ impl MEMKMBuilder {
                 (r, c, v)
             })
             .collect()
-    }
-
-    /// Steady-state W: last row replaced by normalisation (all 1s).
-    ///
-    /// W's rows are linearly dependent (each column sums to zero), so
-    /// W @ Theta = 0 alone has a 1-dimensional null space and no unique
-    /// solution. Dropping the last row and replacing it with all-1s plus a
-    /// matching rhs of 1 in that slot turns it into Σ(Theta) = 1.
-    fn compute_w_ss_coo(&self) -> (Vec<i32>, Vec<i32>, Vec<f64>) {
-        let n = self.tile.n_states;
-        let last_row = (n - 1) as i32;
-        let (rows, cols, vals, diag) = self.compute_offdiag();
-
-        let mut out_rows = Vec::with_capacity(rows.len() + n);
-        let mut out_cols = Vec::with_capacity(cols.len() + n);
-        let mut out_vals = Vec::with_capacity(vals.len() + n);
-
-        // Off-diagonal entries not in last row + diagonal for all but last row
-        for i in 0..n - 1 {
-            out_rows.push(i as i32);
-            out_cols.push(i as i32);
-            out_vals.push(diag[i]);
-        }
-        for ((r, c), v) in rows.iter().zip(cols.iter()).zip(vals.iter()) {
-            if *r != last_row {
-                out_rows.push(*r);
-                out_cols.push(*c);
-                out_vals.push(*v);
-            }
-        }
-        // Normalisation row
-        for j in 0..n {
-            out_rows.push(last_row);
-            out_cols.push(j as i32);
-            out_vals.push(1.0);
-        }
-        (out_rows, out_cols, out_vals)
     }
 }
 
