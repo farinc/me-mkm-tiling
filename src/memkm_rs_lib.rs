@@ -61,13 +61,59 @@ fn state_counts(idx: usize, l: usize, base: usize) -> Vec<usize> {
 // ─── Interaction models ──────────────────────────────────────────────────────
 
 /// How lateral interactions modify an elementary step's rate.
+///
+/// The whole model is expressed through two *factorized* primitives — the
+/// energy one reacting site contributes per non-reacting neighbor
+/// (`neighbor_energy`), and the reacting pair's mutual-bond energy
+/// (`pair_energy`). Everything else is derived:
+///
+///   - the scalar correction `corr = exp(-ΔE/kbt)` is aggregated from them by
+///     the default `rate_correction_and_delta_e` (the dense/sparse path), and
+///   - the per-neighbor energy *row* `site_energy_row` (the tensor-train path's
+///     per-site diagonal factor) is the same primitive sampled over species.
+///
+/// So a new interaction is added by implementing just `neighbor_energy` and
+/// `pair_energy` (plus `kbt`/`n_species`/`trivial`); both backends pick it up
+/// with no further changes, *provided* ΔE stays additive over neighbors (the
+/// condition that makes it a rank-1 tensor operator). A correction that is a
+/// nonlinear function of the aggregated neighbour energy cannot be expressed
+/// this way and needs a different representation.
 pub trait InteractionModel: std::fmt::Debug + Send + Sync {
     /// True when every correction this model can produce is exactly 1.
     fn trivial(&self) -> bool;
 
+    /// kBT (so β = 1/kbt); corr = exp(-ΔE/kbt).
+    fn kbt(&self) -> f64;
+
+    /// Number of species (row length of `site_energy_row`).
+    fn n_species(&self) -> usize;
+
+    /// Energy a reacting site changing `sp_in -> sp_out` contributes to ΔE for
+    /// each non-reacting neighbor of species `sp_nbr`. The single source of
+    /// truth for the model's per-neighbor physics.
+    fn neighbor_energy(&self, sp_in: u8, sp_out: u8, sp_nbr: u8) -> f64;
+
+    /// Energy the reacting pair's mutual bond contributes to ΔE, for a pair
+    /// event `(in0,in1) -> (out0,out1)` (the two reacting sites are bonded by
+    /// construction). Zero for single-site events.
+    fn pair_energy(&self, in0: u8, out0: u8, in1: u8, out1: u8) -> f64;
+
+    /// The per-neighbor energy row [neighbor_energy(sp_in, sp_out, s) for every
+    /// species s] — the tensor-train backend's per-site diagonal factor before
+    /// the exp(-·/kbt). Default: sample `neighbor_energy` over all species.
+    fn site_energy_row(&self, sp_in: u8, sp_out: u8) -> Vec<f64> {
+        (0..self.n_species() as u8)
+            .map(|s| self.neighbor_energy(sp_in, sp_out, s))
+            .collect()
+    }
+
     /// Multiplicative rate correction and the underlying barrier shift ΔE:
     /// corr = exp(-β·ΔE) with β = 1/kbt, so ∂corr/∂β = -ΔE·corr — the
     /// β-derivative path relies on this pairing.
+    ///
+    /// Default: ΔE is `neighbor_energy` summed over each reacting site's
+    /// non-reacting neighbors, plus `pair_energy` for a two-site event.
+    /// Concrete models do not override this.
     ///
     /// reacting_sites: indices into state that are changing.
     /// out_species: the reaction's pattern_out codes, positionally aligned
@@ -78,7 +124,36 @@ pub trait InteractionModel: std::fmt::Debug + Send + Sync {
         reacting_sites: &[usize],
         out_species: &[u8],
         neighbors: &[Vec<usize>],
-    ) -> (f64, f64);
+    ) -> (f64, f64) {
+        if self.trivial() {
+            return (1.0, 0.0);
+        }
+        let mut in_rxn = [false; 64];
+        for &s in reacting_sites {
+            in_rxn[s] = true;
+        }
+        let mut delta_e = 0.0f64;
+        for (k, &site) in reacting_sites.iter().enumerate() {
+            let sp_in = state[site];
+            let sp_out = out_species[k];
+            for &nbr in &neighbors[site] {
+                if !in_rxn[nbr] {
+                    delta_e += self.neighbor_energy(sp_in, sp_out, state[nbr]);
+                }
+            }
+        }
+        // The partner's species changes with the reaction, so the mutual term
+        // can't ride along in the spectator sums above.
+        if reacting_sites.len() == 2 {
+            delta_e += self.pair_energy(
+                state[reacting_sites[0]],
+                out_species[0],
+                state[reacting_sites[1]],
+                out_species[1],
+            );
+        }
+        ((-delta_e / self.kbt()).exp(), delta_e)
+    }
 
     /// Just the multiplicative rate correction.
     #[inline]
@@ -97,50 +172,6 @@ pub trait InteractionModel: std::fmt::Debug + Send + Sync {
     fn repr_str(&self) -> String;
     fn clone_box(&self) -> Box<dyn InteractionModel>;
     fn to_py(&self, py: Python) -> Py<PyAny>;
-}
-
-/// (S_in, S_out) of one event: eps summed over the non-reacting neighbors of
-/// each reacting site, S_in with the initial species, S_out with the
-/// pattern_out species. plus, for a pair event, the mutual term of the two
-/// reacting sites (always a bonded pair by construction), counted once.
-/// S_out lookups are skipped unless need_out.
-#[inline]
-fn interaction_sums(
-    epsilon: &[Vec<f64>],
-    state: &[u8],
-    reacting_sites: &[usize],
-    out_species: &[u8],
-    neighbors: &[Vec<usize>],
-    need_out: bool,
-) -> (f64, f64) {
-    let mut in_rxn = [false; 64];
-    for &s in reacting_sites {
-        in_rxn[s] = true;
-    }
-    let mut s_in = 0.0f64;
-    let mut s_out = 0.0f64;
-    for (k, &site) in reacting_sites.iter().enumerate() {
-        let sp_in = state[site] as usize;
-        let sp_out = out_species[k] as usize;
-        for &nbr in &neighbors[site] {
-            if !in_rxn[nbr] {
-                let sp_nbr = state[nbr] as usize;
-                s_in += epsilon[sp_in][sp_nbr];
-                if need_out {
-                    s_out += epsilon[sp_out][sp_nbr];
-                }
-            }
-        }
-    }
-    // The partner's species changes with the reaction, so the mutual term
-    // can't ride along in the spectator sums above.
-    if reacting_sites.len() == 2 {
-        s_in += epsilon[state[reacting_sites[0]] as usize][state[reacting_sites[1]] as usize];
-        if need_out {
-            s_out += epsilon[out_species[0] as usize][out_species[1] as usize];
-        }
-    }
-    (s_in, s_out)
 }
 
 fn all_zero(epsilon: &[Vec<f64>]) -> bool {
@@ -191,6 +222,20 @@ impl InitialStateInteraction {
         BepInteraction::new(self.epsilon.clone(), omega, self.kbt)
     }
 
+    /// Per-neighbor energy row for a reacting site sp_in -> sp_out (initial
+    /// state carries the full interaction, so sp_out is unused). Exposed for
+    /// the tensor-train backend; see the trait method.
+    #[pyo3(name = "site_energy_row")]
+    fn site_energy_row_py(&self, sp_in: u8, sp_out: u8) -> Vec<f64> {
+        InteractionModel::site_energy_row(self, sp_in, sp_out)
+    }
+
+    /// Reacting pair's mutual-bond energy. Exposed for the tensor-train backend.
+    #[pyo3(name = "pair_energy")]
+    fn pair_energy_py(&self, in0: u8, out0: u8, in1: u8, out1: u8) -> f64 {
+        InteractionModel::pair_energy(self, in0, out0, in1, out1)
+    }
+
     fn __repr__(&self) -> String {
         if self.trivial {
             format!("InitialStateInteraction(noninteracting, kBT={})", self.kbt)
@@ -208,6 +253,27 @@ impl InteractionModel for InitialStateInteraction {
         self.trivial
     }
 
+    fn kbt(&self) -> f64 {
+        self.kbt
+    }
+
+    fn n_species(&self) -> usize {
+        self.epsilon.len()
+    }
+
+    /// The transition state is pinned at the interaction-free reference, so the
+    /// full initial-state (de)stabilisation ε[sp_in][sp_nbr] enters the barrier
+    /// (independent of the final species).
+    #[inline]
+    fn neighbor_energy(&self, sp_in: u8, _sp_out: u8, sp_nbr: u8) -> f64 {
+        self.epsilon[sp_in as usize][sp_nbr as usize]
+    }
+
+    #[inline]
+    fn pair_energy(&self, in0: u8, _out0: u8, in1: u8, _out1: u8) -> f64 {
+        self.epsilon[in0 as usize][in1 as usize]
+    }
+
     fn repr_str(&self) -> String {
         self.__repr__()
     }
@@ -220,28 +286,6 @@ impl InteractionModel for InitialStateInteraction {
         Py::new(py, self.clone())
             .expect("failed to allocate Python object")
             .into_any()
-    }
-
-    #[inline]
-    fn rate_correction_and_delta_e(
-        &self,
-        state: &[u8],
-        reacting_sites: &[usize],
-        out_species: &[u8],
-        neighbors: &[Vec<usize>],
-    ) -> (f64, f64) {
-        if self.trivial {
-            return (1.0, 0.0);
-        }
-        let (s_in, _) = interaction_sums(
-            &self.epsilon,
-            state,
-            reacting_sites,
-            out_species,
-            neighbors,
-            false,
-        );
-        ((-s_in / self.kbt).exp(), s_in)
     }
 }
 
@@ -286,6 +330,19 @@ impl BepInteraction {
         Self::new(self.epsilon.clone(), omega, self.kbt)
     }
 
+    /// Per-neighbor energy row for a reacting site sp_in -> sp_out. Exposed for
+    /// the tensor-train backend; see the trait method.
+    #[pyo3(name = "site_energy_row")]
+    fn site_energy_row_py(&self, sp_in: u8, sp_out: u8) -> Vec<f64> {
+        InteractionModel::site_energy_row(self, sp_in, sp_out)
+    }
+
+    /// Reacting pair's mutual-bond energy. Exposed for the tensor-train backend.
+    #[pyo3(name = "pair_energy")]
+    fn pair_energy_py(&self, in0: u8, out0: u8, in1: u8, out1: u8) -> f64 {
+        InteractionModel::pair_energy(self, in0, out0, in1, out1)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "BepInteraction(epsilon={:?}, omega={}, kBT={})",
@@ -297,6 +354,31 @@ impl BepInteraction {
 impl InteractionModel for BepInteraction {
     fn trivial(&self) -> bool {
         self.trivial
+    }
+
+    fn kbt(&self) -> f64 {
+        self.kbt
+    }
+
+    fn n_species(&self) -> usize {
+        self.epsilon.len()
+    }
+
+    /// The TS interpolates linearly between initial and final state, so only
+    /// the ω-weighted change in interaction energy enters the barrier:
+    /// ω·(ε[sp_in][sp_nbr] - ε[sp_out][sp_nbr]).
+    #[inline]
+    fn neighbor_energy(&self, sp_in: u8, sp_out: u8, sp_nbr: u8) -> f64 {
+        self.omega
+            * (self.epsilon[sp_in as usize][sp_nbr as usize]
+                - self.epsilon[sp_out as usize][sp_nbr as usize])
+    }
+
+    #[inline]
+    fn pair_energy(&self, in0: u8, out0: u8, in1: u8, out1: u8) -> f64 {
+        self.omega
+            * (self.epsilon[in0 as usize][in1 as usize]
+                - self.epsilon[out0 as usize][out1 as usize])
     }
 
     fn repr_str(&self) -> String {
@@ -311,29 +393,6 @@ impl InteractionModel for BepInteraction {
         Py::new(py, self.clone())
             .expect("failed to allocate Python object")
             .into_any()
-    }
-
-    #[inline]
-    fn rate_correction_and_delta_e(
-        &self,
-        state: &[u8],
-        reacting_sites: &[usize],
-        out_species: &[u8],
-        neighbors: &[Vec<usize>],
-    ) -> (f64, f64) {
-        if self.trivial {
-            return (1.0, 0.0);
-        }
-        let (s_in, s_out) = interaction_sums(
-            &self.epsilon,
-            state,
-            reacting_sites,
-            out_species,
-            neighbors,
-            true,
-        );
-        let delta_e = self.omega * (s_in - s_out);
-        ((-delta_e / self.kbt).exp(), delta_e)
     }
 }
 

@@ -37,6 +37,15 @@ class BepInteraction:
         r"""
         Copy at a different ω; energies and kBT unchanged.
         """
+    def site_energy_row(self, sp_in: builtins.int, sp_out: builtins.int) -> builtins.list[builtins.float]:
+        r"""
+        Per-neighbor energy row for a reacting site sp_in -> sp_out. Exposed for
+        the tensor-train backend; see the trait method.
+        """
+    def pair_energy(self, in0: builtins.int, out0: builtins.int, in1: builtins.int, out1: builtins.int) -> builtins.float:
+        r"""
+        Reacting pair's mutual-bond energy. Exposed for the tensor-train backend.
+        """
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -61,6 +70,16 @@ class InitialStateInteraction:
     def to_bep(self, omega: builtins.float) -> BepInteraction:
         r"""
         BEP model with the same energies at the given ω.
+        """
+    def site_energy_row(self, sp_in: builtins.int, sp_out: builtins.int) -> builtins.list[builtins.float]:
+        r"""
+        Per-neighbor energy row for a reacting site sp_in -> sp_out (initial
+        state carries the full interaction, so sp_out is unused). Exposed for
+        the tensor-train backend; see the trait method.
+        """
+    def pair_energy(self, in0: builtins.int, out0: builtins.int, in1: builtins.int, out1: builtins.int) -> builtins.float:
+        r"""
+        Reacting pair's mutual-bond energy. Exposed for the tensor-train backend.
         """
     def __repr__(self) -> builtins.str: ...
 

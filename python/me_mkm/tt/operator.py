@@ -7,28 +7,26 @@ with its lateral-interaction correction) is an EXACT rank-1 MPO term: a product
 of single-site matrices. This holds because the multiplicative rate correction
     corr = exp(-delta_e / kbt)
 has a delta_e that is a SUM over the reacting sites' non-reacting neighbors, so
-corr factorizes over those neighbor sites into per-site diagonal factors. Both
-interaction schemes keep this structure (see _site_energy):
+corr factorizes over those neighbor sites into per-site diagonal factors.
 
-  - InitialStateInteraction: delta_e = S_in, per-neighbor energy epsilon[a][s]
-    (a = the reacting site's *initial* species).
-  - BepInteraction (proximity factor omega): delta_e = omega*(S_in - S_out),
-    per-neighbor energy omega*(epsilon[a][s] - epsilon[b][s]) (b = the *final*
-    species). omega=0 makes the rate blind to interactions.
-
-For a 2-site (pair) event the two reacting sites are themselves bonded, and that
-mutual bond -- epsilon[a1][a2] for the initial-state scheme, or
-omega*(epsilon[a1][a2] - epsilon[b1][b2]) for BEP -- contributes to delta_e too.
-It depends on no spectator site, so it is a scalar prefactor folded into the
-term weight (and carried separately as `mutual_e` for the d/dbeta product rule).
+We do NOT reimplement any interaction formula here. The interaction model
+(src/memkm_rs_lib.rs, the InteractionModel trait) exposes its factorization
+directly: `im.site_energy_row(a, b)` gives the per-neighbor energy row a
+reacting site changing a -> b contributes (the diagonal factor is its
+exp(-row/kbt)), and `im.pair_energy(a1, b1, a2, b2)` gives the reacting pair's
+scalar mutual-bond energy. Any interaction whose delta_e is additive over
+neighbors -- both current schemes, and any future model with the same property
+-- is handled with no change here; it is exactly the set that has a rank-1 MPO
+form. The pair mutual bond depends on no spectator site, so it is a scalar
+prefactor folded into the term weight (kept separately as `mutual_e` for the
+d/dbeta product rule).
 
 W is the sum of all such terms; we accumulate them with intermediate SVD
 rounding (TT.ortho) so the running rank collapses to W's true (small) MPO rank.
-
-This mirrors, term for term, the Rust COO builder in src/memkm_rs_lib.rs
-(interaction_sums + compute_offdiag / compute_w_components_coo): the order-2
-orientation dedup and the mutual-bond term are reproduced exactly, so
-mpo_to_dense(build_W_tt(b)) == build_W(b, steady_state=False) to round-off.
+The result matches the Rust COO builder (which aggregates the SAME factorized
+energies into its scalar correction) so mpo_to_dense(build_W_tt(b)) ==
+build_W(b, steady_state=False) to round-off, including the order-2 orientation
+dedup and the mutual-bond term.
 """
 
 import numpy as np
@@ -45,30 +43,6 @@ def _neighbors(builder: MEMKMBuilder) -> list:
         adj[i].add(j)
         adj[j].add(i)
     return [sorted(s) for s in adj]
-
-
-def _interaction(im):
-    """(eps, kbt, omega, trivial) for an interaction model. omega is None for
-    InitialStateInteraction and a float for BepInteraction; trivial flags an
-    all-zero epsilon (corr == 1, so no correction factors are needed)."""
-    eps = np.asarray(im.epsilon, dtype=float)
-    return eps, im.kbt, getattr(im, "omega", None), not np.any(eps)
-
-
-def _site_energy(eps, omega, a, b) -> np.ndarray:
-    """Per-spectator-species energy row a reacting site (species a -> b)
-    contributes to delta_e: epsilon[a] for the initial-state scheme, or
-    omega*(epsilon[a] - epsilon[b]) for BEP. Indexed by the spectator's species."""
-    return eps[a].copy() if omega is None else omega * (eps[a] - eps[b])
-
-
-def _mutual_energy(eps, omega, a1, a2, b1, b2) -> float:
-    """The reacting pair's mutual-bond contribution to delta_e (pair events
-    only): epsilon[a1][a2] for the initial-state scheme, or
-    omega*(epsilon[a1][a2] - epsilon[b1][b2]) for BEP."""
-    if omega is None:
-        return float(eps[a1, a2])
-    return float(omega * (eps[a1, a2] - eps[b1, b2]))
 
 
 def _E(n: int, to: int, frm: int) -> np.ndarray:
@@ -101,18 +75,20 @@ def _event_terms(builder: MEMKMBuilder, rates=None):
     for ri, rxn in enumerate(reactions):
         k = rxn.rate if rates is None else rates[ri]
         pin, pout = list(rxn.pattern_in), list(rxn.pattern_out)
-        eps, kbt, omega, trivial = _interaction(rxn.get_interaction() or global_im)
+        im = rxn.get_interaction() or global_im
+        kbt = im.kbt
 
         if len(pin) == 1:
             a, b = pin[0], pout[0]
             if a == b:
                 continue  # no state change -> no off-diagonal, no diagonal loss
+            g = np.asarray(im.site_energy_row(a, b), dtype=float)
+            has_g = bool(np.any(g))  # a per-event trivial check (no eps needed)
+            fac = np.diag(np.exp(-g / kbt)) if has_g else None
             for i in range(builder.l):
                 factors = {i: _E(n, b, a) - _E(n, a, a)}
                 energies = {}
-                if not trivial:
-                    g = _site_energy(eps, omega, a, b)
-                    fac = np.diag(np.exp(-g / kbt))
+                if has_g:
                     for m in neigh[i]:
                         factors[m] = fac
                         energies[m] = g
@@ -124,28 +100,30 @@ def _event_terms(builder: MEMKMBuilder, rates=None):
             if (a1, a2) == (b1, b2):
                 continue
             symmetric = a1 == a2 and b1 == b2  # Rust fired_to dedup condition
+            # Site energies / mutual bond depend only on the species, not the
+            # placement, so query the interaction model once per reaction.
+            g_i = np.asarray(im.site_energy_row(a1, b1), dtype=float)
+            g_j = np.asarray(im.site_energy_row(a2, b2), dtype=float)
+            mutual_e = float(im.pair_energy(a1, b1, a2, b2))
+            w_scale = np.exp(-mutual_e / kbt)  # mutual bond -> scalar prefactor
             for si, sj in pairs:
                 orientations = [(si, sj)] if symmetric else [(si, sj), (sj, si)]
                 for i, j in orientations:
                     # Shared correction over non-reacting neighbors of both
                     # reacting sites; a site adjacent to both (complete-graph
                     # tiles) sums both energies (its factor is the product).
-                    corr_factors = {}
                     energies = {}
-                    mutual_e = 0.0
-                    if not trivial:
-                        g_i = _site_energy(eps, omega, a1, b1)
-                        g_j = _site_energy(eps, omega, a2, b2)
-                        for site, g in ((i, g_i), (j, g_j)):
-                            for m in neigh[site]:
-                                if m == i or m == j:
-                                    continue
-                                energies[m] = energies.get(m, np.zeros(n)) + g
-                        corr_factors = {
-                            m: np.diag(np.exp(-g / kbt)) for m, g in energies.items()
-                        }
-                        mutual_e = _mutual_energy(eps, omega, a1, a2, b1, b2)
-                    w = k * np.exp(-mutual_e / kbt)  # mutual bond -> scalar prefactor
+                    for site, g in ((i, g_i), (j, g_j)):
+                        if not np.any(g):
+                            continue
+                        for m in neigh[site]:
+                            if m == i or m == j:
+                                continue
+                            energies[m] = energies.get(m, np.zeros(n)) + g
+                    corr_factors = {
+                        m: np.diag(np.exp(-g / kbt)) for m, g in energies.items()
+                    }
+                    w = k * w_scale
                     gain = {**corr_factors, i: _E(n, b1, a1), j: _E(n, b2, a2)}
                     loss = {**corr_factors, i: _E(n, a1, a1), j: _E(n, a2, a2)}
                     yield ri, +w, gain, dict(energies), mutual_e
