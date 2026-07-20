@@ -103,7 +103,7 @@ def tile_style(topology):
     """Return topology.style as an int, defaulting to brickwork/square row."""
     try:
         return int(getattr(topology, "style", 0))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 0
 
 
@@ -213,7 +213,9 @@ def make_equation(pattern_in, pattern_out, all_species, rate_fwd=None, rate_bwd=
     return f"{lhs} {arrow} {rhs}"
 
 
-def build_graph(builder, display_reactions=None, title=None, node_colors=None, Theta=None):
+def build_graph(
+    builder, display_reactions=None, title=None, node_colors=None, Theta=None
+):
     """
     Build the coverage-class transition graph from an MEMKMBuilder.
 
@@ -406,9 +408,7 @@ def build_graph(builder, display_reactions=None, title=None, node_colors=None, T
         for rxn, m in zip(flat, multipliers):
             n = m[counts]
             if n > 0:
-                dc = pattern_delta_counts(
-                    rxn["pattern_in"], rxn["pattern_out"], n_ads
-                )
+                dc = pattern_delta_counts(rxn["pattern_in"], rxn["pattern_out"], n_ads)
                 dst = tuple(c + dc[i] for i, c in enumerate(counts))
                 if dst in groups and all(c >= 0 for c in dst):
                     ni = int(n) if n == int(n) else round(n, 2)
