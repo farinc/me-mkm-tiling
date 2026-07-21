@@ -960,8 +960,38 @@ impl MEMKMBuilder {
 
     /// Full dynamical-form W as COO triples (rows, cols, vals); hand these
     /// straight to scipy.sparse on the Python side.
+    ///
+    /// Diagonal = -sum of outgoing rates: compute_offdiag's output plus the
+    /// diag vector appended as the matrix diagonal, at each reaction's
+    /// current rate.
     pub fn build_w_coo(&self) -> (Vec<i32>, Vec<i32>, Vec<f64>) {
-        self.compute_w_coo()
+        let n = self.tile.n_states;
+        let (mut rows, mut cols, mut vals, diag) = self.compute_offdiag();
+        for i in 0..n {
+            rows.push(i as i32);
+            cols.push(i as i32);
+            vals.push(diag[i]);
+        }
+        (rows, cols, vals)
+    }
+
+    /// Same as `build_w_coo`, but restricted to rows in `[row_start, row_end)`
+    /// Each row's off-diagonal entries are found by inverting every reaction's
+    /// forward pattern (reconstructing the predecessor state from the row's own
+    /// decoded state) rather than scanning every column, so the cost is
+    /// O(row_end - row_start), not O(n_states).
+    pub fn build_w_coo_range(
+        &self,
+        row_start: usize,
+        row_end: usize,
+    ) -> PyResult<(Vec<i32>, Vec<i32>, Vec<f64>)> {
+        if row_start > row_end || row_end > self.tile.n_states {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "row range [{row_start}, {row_end}) invalid for n_states={}",
+                self.tile.n_states
+            )));
+        }
+        Ok(self.compute_w_coo_range(row_start, row_end))
     }
 
     /// One dynamical-form W matrix per reaction, each built at rate=1.
@@ -969,9 +999,56 @@ impl MEMKMBuilder {
     /// W is linear in each reaction's rate constant, so for time-dependent
     /// rates k_i(t):  W(t) = Σ k_i(t) · components[i]. Useful for forced
     /// oscillations / Floquet-type driving, where rebuilding the full W from
-    /// scratch at every ODE step would be wasteful.
+    /// scratch at every ODE step would be wasteful: given the components,
+    /// recovering W for any rate vector is just a weighted sum of sparse
+    /// matrices, no re-walk of states/reactions/sites needed. Same
+    /// `step_edges` walk as `build_w_coo`, just keeping per-reaction
+    /// rows/cols/vals/diag instead of one shared set, and corr instead of
+    /// rxn.rate * corr (rxn.rate is multiplied in on the Python side).
     pub fn build_w_components_coo(&self) -> Vec<(Vec<i32>, Vec<i32>, Vec<f64>)> {
-        self.compute_w_components_coo()
+        let n = self.tile.n_states;
+        let n_rxns = self.reactions.len();
+        let mut rows = vec![Vec::<i32>::new(); n_rxns];
+        let mut cols = vec![Vec::<i32>::new(); n_rxns];
+        let mut vals = vec![Vec::<f64>::new(); n_rxns];
+        let mut diag = vec![vec![0.0f64; n]; n_rxns];
+
+        for from_idx in 0..n {
+            let state = decode(from_idx, self.tile.l, self.tile.base);
+
+            for (ri, rxn) in self.reactions.iter().enumerate() {
+                let im = rxn.effective_interaction(self.interaction.as_ref());
+                self.step_edges(
+                    &state,
+                    from_idx,
+                    rxn,
+                    false,
+                    |pre, sites| {
+                        im.rate_correction(pre, sites, &rxn.pattern_out, &self.tile.neighbors)
+                    },
+                    |to_idx, corr| {
+                        rows[ri].push(to_idx as i32);
+                        cols[ri].push(from_idx as i32);
+                        vals[ri].push(corr);
+                        diag[ri][from_idx] -= corr;
+                    },
+                );
+            }
+        }
+
+        (0..n_rxns)
+            .map(|ri| {
+                let mut r = std::mem::take(&mut rows[ri]);
+                let mut c = std::mem::take(&mut cols[ri]);
+                let mut v = std::mem::take(&mut vals[ri]);
+                for i in 0..n {
+                    r.push(i as i32);
+                    c.push(i as i32);
+                    v.push(diag[ri][i]);
+                }
+                (r, c, v)
+            })
+            .collect()
     }
 
     /// ∂(dynamical-form W)/∂β per reaction, each at unit base rate (β = 1/kbt).
@@ -981,7 +1058,57 @@ impl MEMKMBuilder {
     /// ∂W/∂β = Σ k_i·dbeta_components[i] (rates are β-independent themselves;
     /// only the interaction correction factor depends on β).
     pub fn build_dw_dbeta_components_coo(&self) -> Vec<(Vec<i32>, Vec<i32>, Vec<f64>)> {
-        self.compute_dw_dbeta_components_coo()
+        let n = self.tile.n_states;
+        let n_rxns = self.reactions.len();
+        let mut rows = vec![Vec::<i32>::new(); n_rxns];
+        let mut cols = vec![Vec::<i32>::new(); n_rxns];
+        let mut vals = vec![Vec::<f64>::new(); n_rxns];
+        let mut diag = vec![vec![0.0f64; n]; n_rxns];
+
+        for from_idx in 0..n {
+            let state = decode(from_idx, self.tile.l, self.tile.base);
+
+            for (ri, rxn) in self.reactions.iter().enumerate() {
+                let im = rxn.effective_interaction(self.interaction.as_ref());
+                self.step_edges(
+                    &state,
+                    from_idx,
+                    rxn,
+                    false,
+                    |pre, sites| {
+                        let (corr, delta_e) = im.rate_correction_and_delta_e(
+                            pre,
+                            sites,
+                            &rxn.pattern_out,
+                            &self.tile.neighbors,
+                        );
+                        -delta_e * corr
+                    },
+                    |to_idx, dcorr| {
+                        rows[ri].push(to_idx as i32);
+                        cols[ri].push(from_idx as i32);
+                        vals[ri].push(dcorr);
+                        diag[ri][from_idx] -= dcorr;
+                    },
+                );
+            }
+        }
+
+        // Append each reaction's diagonal as the last entries of its own
+        // COO triple, same as build_w_components_coo's tail step.
+        (0..n_rxns)
+            .map(|ri| {
+                let mut r = std::mem::take(&mut rows[ri]);
+                let mut c = std::mem::take(&mut cols[ri]);
+                let mut v = std::mem::take(&mut vals[ri]);
+                for i in 0..n {
+                    r.push(i as i32);
+                    c.push(i as i32);
+                    v.push(diag[ri][i]);
+                }
+                (r, c, v)
+            })
+            .collect()
     }
 
     fn __repr__(&self) -> String {
@@ -997,6 +1124,80 @@ impl MEMKMBuilder {
 }
 
 impl MEMKMBuilder {
+    /// Core reaction-matching primitive, shared by every W-builder pass
+    /// below (forward full/component/derivative builds and the reverse
+    /// row-range build).
+    ///
+    /// Forward (`reverse = false`): `state`/`state_idx` is the pre-reaction
+    /// ("from") state; matches `pattern_in`, and for every site/pair that
+    /// reacts, calls `sink(to_idx, value(state, reacting_sites))`.
+    ///
+    /// Reverse (`reverse = true`): `state`/`state_idx` is the post-reaction
+    /// ("to") state and matches `pattern_out`. It reconstructs each
+    /// predecessor by writing `pattern_in` at the reacting site(s) (undoing
+    /// the reaction), calling `sink(from_idx, value(pred, reacting_sites))`.
+    /// `value` needs the actual pre-reaction state to read sp_in and
+    /// spectator neighbors correctly, so it runs on the reconstructed
+    /// predecessor, not on `state`.
+    ///
+    /// Self-transitions (`partner_idx == state_idx`) are filtered before
+    /// `value`/`sink` run, matching every builder's forward self-loop skip.
+    fn step_edges(
+        &self,
+        state: &[u8],
+        state_idx: usize,
+        rxn: &Reaction,
+        reverse: bool,
+        mut value: impl FnMut(&[u8], &[usize]) -> f64,
+        mut sink: impl FnMut(usize, f64),
+    ) {
+        let (match_pat, apply_pat): (&[u8], &[u8]) = if reverse {
+            (&rxn.pattern_out, &rxn.pattern_in)
+        } else {
+            (&rxn.pattern_in, &rxn.pattern_out)
+        };
+        match match_pat.len() {
+            // ── 1st order reaction ───────────────────────────────────────
+            1 => {
+                for site in 0..self.tile.l {
+                    if state[site] == match_pat[0] {
+                        let mut ns = state.to_vec();
+                        ns[site] = apply_pat[0];
+                        let partner_idx = encode(&ns, self.tile.base);
+                        if partner_idx == state_idx {
+                            continue;
+                        }
+                        let pre: &[u8] = if reverse { &ns } else { state };
+                        sink(partner_idx, value(pre, &[site]));
+                    }
+                }
+            }
+
+            // ── 2nd order reaction ───────────────────────────────────────
+            2 => {
+                for &(si, sj) in &self.tile.neighbor_pairs {
+                    let mut fired: Option<usize> = None;
+                    for (s0, s1) in [(si, sj), (sj, si)] {
+                        if state[s0] == match_pat[0] && state[s1] == match_pat[1] {
+                            let mut ns = state.to_vec();
+                            ns[s0] = apply_pat[0];
+                            ns[s1] = apply_pat[1];
+                            let partner_idx = encode(&ns, self.tile.base);
+                            if partner_idx == state_idx || fired == Some(partner_idx) {
+                                continue;
+                            }
+                            fired = Some(partner_idx);
+                            let pre: &[u8] = if reverse { &ns } else { state };
+                            sink(partner_idx, value(pre, &[s0, s1]));
+                        }
+                    }
+                }
+            }
+
+            _ => unreachable!(),
+        }
+    }
+
     fn compute_offdiag(&self) -> (Vec<i32>, Vec<i32>, Vec<f64>, Vec<f64>) {
         let n = self.tile.n_states;
         // Upper bound on off-diagonal entries per state: each reaction can fire at
@@ -1021,297 +1222,68 @@ impl MEMKMBuilder {
 
             for rxn in &self.reactions {
                 let im = rxn.effective_interaction(self.interaction.as_ref());
-
-                match rxn.pattern_in.len() {
-                    // ── 1st order reaction ───────────────────────────────────────────
-                    1 => {
-                        for site in 0..self.tile.l {
-                            if state[site] == rxn.pattern_in[0] {
-                                let corr = im.rate_correction(
-                                    &state,
-                                    &[site],
-                                    &rxn.pattern_out,
-                                    &self.tile.neighbors,
-                                );
-                                let rate = rxn.rate * corr;
-                                let mut ns = state.clone();
-                                ns[site] = rxn.pattern_out[0];
-                                let to_idx = encode(&ns, self.tile.base);
-                                if to_idx != from_idx {
-                                    rows.push(to_idx as i32);
-                                    cols.push(from_idx as i32);
-                                    vals.push(rate);
-                                    diag[from_idx] -= rate;
-                                }
-                            }
-                        }
-                    }
-
-                    // ── 2nd order reaction ─────────────────────────────────────────
-                    2 => {
-                        for &(si, sj) in &self.tile.neighbor_pairs {
-                            let mut fired_to: Option<usize> = None;
-                            for (s0, s1) in [(si, sj), (sj, si)] {
-                                if state[s0] == rxn.pattern_in[0] && state[s1] == rxn.pattern_in[1]
-                                {
-                                    let mut ns = state.clone();
-                                    ns[s0] = rxn.pattern_out[0];
-                                    ns[s1] = rxn.pattern_out[1];
-                                    let to_idx = encode(&ns, self.tile.base);
-                                    if to_idx == from_idx || fired_to == Some(to_idx) {
-                                        continue;
-                                    }
-                                    fired_to = Some(to_idx);
-                                    // Correction: non-reacting neighbors of both
-                                    // reacting sites, derived from pattern_in.
-                                    let corr = im.rate_correction(
-                                        &state,
-                                        &[s0, s1],
-                                        &rxn.pattern_out,
-                                        &self.tile.neighbors,
-                                    );
-                                    let rate = rxn.rate * corr;
-                                    rows.push(to_idx as i32);
-                                    cols.push(from_idx as i32);
-                                    vals.push(rate);
-                                    diag[from_idx] -= rate;
-                                }
-                            }
-                        }
-                    }
-
-                    _ => unreachable!(),
-                }
+                self.step_edges(
+                    &state,
+                    from_idx,
+                    rxn,
+                    false,
+                    |pre, sites| {
+                        im.rate_correction(pre, sites, &rxn.pattern_out, &self.tile.neighbors)
+                    },
+                    |to_idx, corr| {
+                        let rate = rxn.rate * corr;
+                        rows.push(to_idx as i32);
+                        cols.push(from_idx as i32);
+                        vals.push(rate);
+                        diag[from_idx] -= rate;
+                    },
+                );
             }
         }
 
         (rows, cols, vals, diag)
     }
 
-    /// W: diagonal = -sum of outgoing rates.
-    ///
-    /// compute_offdiag's output plus the diag vector appended as the matrix
-    /// diagonal; the full W at each reaction's current rate.
-    fn compute_w_coo(&self) -> (Vec<i32>, Vec<i32>, Vec<f64>) {
-        let n = self.tile.n_states;
-        let (mut rows, mut cols, mut vals, diag) = self.compute_offdiag();
-        for i in 0..n {
-            rows.push(i as i32);
-            cols.push(i as i32);
-            vals.push(diag[i]);
+    fn compute_w_coo_range(
+        &self,
+        row_start: usize,
+        row_end: usize,
+    ) -> (Vec<i32>, Vec<i32>, Vec<f64>) {
+        let mut rows = Vec::new();
+        let mut cols = Vec::new();
+        let mut vals = Vec::new();
+
+        for r in row_start..row_end {
+            let r_state = decode(r, self.tile.l, self.tile.base);
+            let mut diag_r = 0.0f64;
+
+            for rxn in &self.reactions {
+                let im = rxn.effective_interaction(self.interaction.as_ref());
+                let corr_of = |pre: &[u8], sites: &[usize]| {
+                    im.rate_correction(pre, sites, &rxn.pattern_out, &self.tile.neighbors)
+                };
+
+                // r as SOURCE: diagonal only -- the resulting to_idx,
+                // wherever it lands, belongs to another row and is handled
+                // separately when (if) that row is itself built.
+                self.step_edges(&r_state, r, rxn, false, corr_of, |_to_idx, corr| {
+                    diag_r -= rxn.rate * corr;
+                });
+
+                // r as TARGET: invert to find predecessors.
+                self.step_edges(&r_state, r, rxn, true, corr_of, |from_idx, corr| {
+                    rows.push(r as i32);
+                    cols.push(from_idx as i32);
+                    vals.push(rxn.rate * corr);
+                });
+            }
+
+            rows.push(r as i32);
+            cols.push(r as i32);
+            vals.push(diag_r);
         }
+
         (rows, cols, vals)
-    }
-
-    /// Per-reaction dynamical-form W at unit rate, one pass over all states.
-    ///
-    /// W is linear in the reactions' bare rate constants: each reaction i
-    /// contributes its own set of off-diagonal entries and diagonal
-    /// decrements, scaled by k_i and nothing else. So instead of building
-    /// one W = Σ_i(k_i * component_i), this builds each component_i
-    /// separately, evaluated at k_i = 1 (i.e. corr instead of rxn.rate *
-    /// corr, since rxn.rate is multiplied in on the Python side). Given the
-    /// components, recovering W for any rate vector is just a weighted sum
-    /// of sparse matrices; no re-walk of states/reactions/sites needed.
-    /// It allows the Python side to change rates (sweep a concentration,
-    /// drive k_i(t), or build derivative matrices like dW/dbeta) without
-    /// ever calling back into Rust to rebuild the matrix from scratch.
-    ///
-    /// Loop body is otherwise identical to compute_offdiag, just keeping
-    /// per-reaction rows/cols/vals/diag instead of one shared set.
-    fn compute_w_components_coo(&self) -> Vec<(Vec<i32>, Vec<i32>, Vec<f64>)> {
-        let n = self.tile.n_states;
-        let n_rxns = self.reactions.len();
-        let mut rows = vec![Vec::<i32>::new(); n_rxns];
-        let mut cols = vec![Vec::<i32>::new(); n_rxns];
-        let mut vals = vec![Vec::<f64>::new(); n_rxns];
-        let mut diag = vec![vec![0.0f64; n]; n_rxns];
-
-        for from_idx in 0..n {
-            let state = decode(from_idx, self.tile.l, self.tile.base);
-
-            for (ri, rxn) in self.reactions.iter().enumerate() {
-                let im = rxn.effective_interaction(self.interaction.as_ref());
-
-                match rxn.pattern_in.len() {
-                    1 => {
-                        for site in 0..self.tile.l {
-                            if state[site] == rxn.pattern_in[0] {
-                                let corr = im.rate_correction(
-                                    &state,
-                                    &[site],
-                                    &rxn.pattern_out,
-                                    &self.tile.neighbors,
-                                );
-                                let mut ns = state.clone();
-                                ns[site] = rxn.pattern_out[0];
-                                let to_idx = encode(&ns, self.tile.base);
-                                if to_idx != from_idx {
-                                    rows[ri].push(to_idx as i32);
-                                    cols[ri].push(from_idx as i32);
-                                    vals[ri].push(corr);
-                                    diag[ri][from_idx] -= corr;
-                                }
-                            }
-                        }
-                    }
-                    2 => {
-                        for &(si, sj) in &self.tile.neighbor_pairs {
-                            // See compute_offdiag's 2nd-order branch for why
-                            // this dedup is needed (symmetric reactions would
-                            // otherwise double-fire the same bond).
-                            let mut fired_to: Option<usize> = None;
-                            for (s0, s1) in [(si, sj), (sj, si)] {
-                                if state[s0] == rxn.pattern_in[0] && state[s1] == rxn.pattern_in[1]
-                                {
-                                    let mut ns = state.clone();
-                                    ns[s0] = rxn.pattern_out[0];
-                                    ns[s1] = rxn.pattern_out[1];
-                                    let to_idx = encode(&ns, self.tile.base);
-                                    if to_idx == from_idx || fired_to == Some(to_idx) {
-                                        continue;
-                                    }
-                                    fired_to = Some(to_idx);
-                                    let corr = im.rate_correction(
-                                        &state,
-                                        &[s0, s1],
-                                        &rxn.pattern_out,
-                                        &self.tile.neighbors,
-                                    );
-                                    rows[ri].push(to_idx as i32);
-                                    cols[ri].push(from_idx as i32);
-                                    vals[ri].push(corr);
-                                    diag[ri][from_idx] -= corr;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-
-        (0..n_rxns)
-            .map(|ri| {
-                let mut r = std::mem::take(&mut rows[ri]);
-                let mut c = std::mem::take(&mut cols[ri]);
-                let mut v = std::mem::take(&mut vals[ri]);
-                for i in 0..n {
-                    r.push(i as i32);
-                    c.push(i as i32);
-                    v.push(diag[ri][i]);
-                }
-                (r, c, v)
-            })
-            .collect()
-    }
-
-    /// Per-reaction ∂(dynamical-form W)/∂β at unit base rate, one pass over all
-    /// states. Structurally identical to compute_w_components_coo, but each
-    /// off-diagonal/diagonal entry is -ΔE·corr instead of corr, since
-    /// corr = exp(-β·ΔE) ⇒ ∂corr/∂β = -ΔE·corr.
-    fn compute_dw_dbeta_components_coo(&self) -> Vec<(Vec<i32>, Vec<i32>, Vec<f64>)> {
-        let n = self.tile.n_states;
-        let n_rxns = self.reactions.len();
-        // Same per-reaction COO buffers as compute_w_components_coo, but
-        // holding dcorr (the beta-derivative of the rate correction) instead
-        // of corr itself.
-        let mut rows = vec![Vec::<i32>::new(); n_rxns];
-        let mut cols = vec![Vec::<i32>::new(); n_rxns];
-        let mut vals = vec![Vec::<f64>::new(); n_rxns];
-        let mut diag = vec![vec![0.0f64; n]; n_rxns];
-
-        for from_idx in 0..n {
-            let state = decode(from_idx, self.tile.l, self.tile.base);
-
-            for (ri, rxn) in self.reactions.iter().enumerate() {
-                let im = rxn.effective_interaction(self.interaction.as_ref());
-
-                match rxn.pattern_in.len() {
-                    // This is the site-matching as compute_w_components_coo (order-1
-                    // reaction: single reacting site), but here we need both
-                    // corr and delta_e, so call rate_correction_and_delta_e
-                    // instead of rate_correction. dcorr = -delta_e * corr is
-                    // d(corr)/d(beta), since corr = exp(-beta * delta_e).
-                    1 => {
-                        for site in 0..self.tile.l {
-                            if state[site] == rxn.pattern_in[0] {
-                                let (corr, delta_e) = im.rate_correction_and_delta_e(
-                                    &state,
-                                    &[site],
-                                    &rxn.pattern_out,
-                                    &self.tile.neighbors,
-                                );
-                                let dcorr = -delta_e * corr;
-                                let mut ns = state.clone();
-                                ns[site] = rxn.pattern_out[0];
-                                let to_idx = encode(&ns, self.tile.base);
-                                // Same skip-self-transition + "record entry,
-                                // decrement diagonal" pattern as
-                                // compute_offdiag, just storing dcorr instead
-                                // of a rate.
-                                if to_idx != from_idx {
-                                    rows[ri].push(to_idx as i32);
-                                    cols[ri].push(from_idx as i32);
-                                    vals[ri].push(dcorr);
-                                    diag[ri][from_idx] -= dcorr;
-                                }
-                            }
-                        }
-                    }
-                    // Order-2 reaction (reacting pair): identical structure,
-                    // over both orderings of each neighbor pair, with
-                    // the same dedup as compute_offdiag's 2nd-order branch
-                    // (symmetric reactions would otherwise double-fire).
-                    2 => {
-                        for &(si, sj) in &self.tile.neighbor_pairs {
-                            let mut fired_to: Option<usize> = None;
-                            for (s0, s1) in [(si, sj), (sj, si)] {
-                                if state[s0] == rxn.pattern_in[0] && state[s1] == rxn.pattern_in[1]
-                                {
-                                    let mut ns = state.clone();
-                                    ns[s0] = rxn.pattern_out[0];
-                                    ns[s1] = rxn.pattern_out[1];
-                                    let to_idx = encode(&ns, self.tile.base);
-                                    if to_idx == from_idx || fired_to == Some(to_idx) {
-                                        continue;
-                                    }
-                                    fired_to = Some(to_idx);
-                                    let (corr, delta_e) = im.rate_correction_and_delta_e(
-                                        &state,
-                                        &[s0, s1],
-                                        &rxn.pattern_out,
-                                        &self.tile.neighbors,
-                                    );
-                                    let dcorr = -delta_e * corr;
-                                    rows[ri].push(to_idx as i32);
-                                    cols[ri].push(from_idx as i32);
-                                    vals[ri].push(dcorr);
-                                    diag[ri][from_idx] -= dcorr;
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-
-        // Append each reaction's diagonal as the last entries of its own
-        // COO triple, same as compute_w_components_coo's tail step.
-        (0..n_rxns)
-            .map(|ri| {
-                let mut r = std::mem::take(&mut rows[ri]);
-                let mut c = std::mem::take(&mut cols[ri]);
-                let mut v = std::mem::take(&mut vals[ri]);
-                for i in 0..n {
-                    r.push(i as i32);
-                    c.push(i as i32);
-                    v.push(diag[ri][i]);
-                }
-                (r, c, v)
-            })
-            .collect()
     }
 }
 

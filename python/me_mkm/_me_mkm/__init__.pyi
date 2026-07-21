@@ -170,6 +170,14 @@ class MEMKMBuilder:
         Full dynamical-form W as COO triples (rows, cols, vals); hand these
         straight to scipy.sparse on the Python side.
         """
+    def build_w_coo_range(self, row_start: builtins.int, row_end: builtins.int) -> tuple[builtins.list[builtins.int], builtins.list[builtins.int], builtins.list[builtins.float]]:
+        r"""
+        Same as `build_w_coo`, but restricted to rows in `[row_start, row_end)`
+        Each row's off-diagonal entries are found by inverting every reaction's
+        forward pattern (reconstructing the predecessor state from the row's own
+        decoded state) rather than scanning every column, so the cost is
+        O(row_end - row_start), not O(n_states).
+        """
     def build_w_components_coo(self) -> builtins.list[tuple[builtins.list[builtins.int], builtins.list[builtins.int], builtins.list[builtins.float]]]:
         r"""
         One dynamical-form W matrix per reaction, each built at rate=1.
