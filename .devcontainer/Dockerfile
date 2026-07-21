@@ -1,18 +1,15 @@
-FROM ubuntu:22.04
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
-    build-essential cmake git pkg-config \
+    build-essential cmake pkg-config \
     libhwloc-dev libssl-dev libtirpc-dev libpam-dev libncurses-dev \
     libdb-dev \
-    m4 sudo curl ca-certificates dos2unix \
+    m4 dos2unix \
     libopenmpi-dev openmpi-bin \
+    petsc-dev slepc-dev \
     && rm -rf /var/lib/apt/lists/*
-
-RUN useradd -m -s /bin/bash vscode \
-    && echo "vscode ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/vscode \
-    && chmod 0440 /etc/sudoers.d/vscode
 
 USER vscode
 WORKDIR /home/vscode

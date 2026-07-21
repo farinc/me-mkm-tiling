@@ -16,7 +16,15 @@
         "charliermarsh.ruff",
         "tamasfe.even-better-toml",
         "ms-toolsai.jupyter"
-      ]
+      ],
+      "settings": {
+        "rust-analyzer.cargo.extraEnv": {
+          "PYO3_PYTHON": "${workspaceFolder}/.venv/bin/python"
+        },
+        "terminal.integrated.env.linux": {
+          "PYO3_PYTHON": "${workspaceFolder}/.venv/bin/python"
+        }
+      }
     }
   }
 }

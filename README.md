@@ -1,6 +1,13 @@
 # Master-Equation Microkinetics Toolkit
 A Rust/Python package for ME-MKM. Build the transition matrix $W$ from surface reaction events, solve for the steady state, and explore the microstates of the system.
 
+Note that `cargo`, the project builder and repository manager for Rust, may get confused what Python to look at to write bindings for, particularlly if you use something like `conda` which sets the python enviroment regardless of project. In which case, deactivate it (`conda deactivate`) first and if that still doesnt help set the enviroment var `PYO3_PYTHON` to the path of the `python.exe` from the `uv` enviroment. One way to do this specific to Rust is adding this to .cargo/config.toml:
+```toml
+[env]
+PYO3_PYTHON = { value = ".venv/path/to/python.exe", relative = true }
+```
+If all else fails on Windows, use the dev enviroment to give you Linux on your machine. This will require installing WSL and Docker beforehand however.
+
 ## Sparse backend
 
 ```bash
