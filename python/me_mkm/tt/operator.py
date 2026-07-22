@@ -30,7 +30,7 @@ dedup and the mutual-bond term.
 """
 
 import numpy as np
-from scikit_tt.tensor_train import TT
+from torchtt import TT
 
 from me_mkm._me_mkm import MEMKMBuilder
 
@@ -149,8 +149,8 @@ def _sum_rank1(terms, l, n, threshold, group_size):
         for t in pending[1:]:
             block = block + t
         pending.clear()
-        block = block.ortho(threshold=threshold)
-        return block if acc is None else (acc + block).ortho(threshold=threshold)
+        block = block.round(eps=threshold)
+        return block if acc is None else (acc + block).round(eps=threshold)
 
     for weight, factors in terms:
         pending.append(rank1_operator(l, n, factors) * float(weight))

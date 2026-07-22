@@ -9,7 +9,7 @@ in l. Results match the dense functions to solver tolerance.
 """
 
 import numpy as np
-from scikit_tt.tensor_train import TT
+from torchtt import TT
 
 from me_mkm._me_mkm import MEMKMBuilder
 from me_mkm.tt.operator import _event_terms
@@ -19,15 +19,15 @@ def _product_contract(theta_tt: TT, factors: dict, default=None):
     """<probe, theta> for a rank-1 (product) probe covector whose site-p vector
     is factors[p] (or `default`, all-ones, where absent). Walks theta's cores
     directly so complex probe vectors (used by the generating function) work.
-    theta_tt is an MPS: core p has shape (r_left, n, 1, r_right)."""
-    l = theta_tt.order
-    n = theta_tt.row_dims[0]
+    theta_tt is a TT tensor: core p has shape (r_left, n, r_right)."""
+    l = len(theta_tt.N)
+    n = theta_tt.N[0]
     if default is None:
         default = np.ones(n)
     acc = np.ones((1, 1), dtype=complex)
     for p in range(l):
         v = np.asarray(factors.get(p, default))
-        core = theta_tt.cores[p][:, :, 0, :]  # (r_left, n, r_right)
+        core = theta_tt.cores[p].detach().numpy()  # (r_left, n, r_right)
         m = np.tensordot(v, core, axes=(0, 1))  # (r_left, r_right)
         acc = acc @ m
     val = acc[0, 0]
@@ -38,8 +38,8 @@ def site_marginals(theta_tt: TT) -> np.ndarray:
     """Per-site species marginals P[p, s] = prob site p is species s, for a
     probability-normalized theta. One rank-1 contraction per (site, species):
     <1| with site p pinned to basis vector e_s."""
-    l = theta_tt.order
-    n = theta_tt.row_dims[0]
+    l = len(theta_tt.N)
+    n = theta_tt.N[0]
     P = np.zeros((l, n))
     for p in range(l):
         for s in range(n):

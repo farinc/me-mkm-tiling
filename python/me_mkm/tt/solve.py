@@ -17,8 +17,8 @@ the bare rates are. The same A drives the analytic dTheta/dbeta solve.
 import dataclasses
 
 import numpy as np
-from scikit_tt.solvers import sle
-from scikit_tt.tensor_train import TT
+import torchtt
+from torchtt import TT
 
 from me_mkm.tt.convert import ones_tt, rank1_operator, rank1_vector, tt_inner
 
@@ -65,20 +65,20 @@ def solve_steady_state_tt(
     (e.g. a neighboring sweep point or convert.product_state_tt) to cut sweeps
     near a transition. `c` sets the grounding strength on the norm-normalized W.
     """
-    l = W_tt.order
-    n = W_tt.row_dims[0]
+    l = len(W_tt.N)
+    n = W_tt.N[0]
 
     wn = W_tt.norm()
     Wn = W_tt * (1.0 / wn) if wn > 0 else W_tt
     u = _uniform_state(l, n)
 
-    # MALS adapts rank by SVD-splitting merged core pairs, so a rank-1 uniform
+    # AMEn adapts rank by SVD-splitting merged core pairs, so a rank-1 uniform
     # start is fine -- it grows as needed up to max_rank.
-    A = (Wn + _grounding_op(l, n) * c).ortho(threshold=threshold)
+    A = (Wn + _grounding_op(l, n) * c).round(eps=threshold)
     rhs = u * c
     theta0 = u if theta0 is None else theta0
-    theta = sle.mals(
-        A, theta0, rhs, repeats=repeats, threshold=threshold, max_rank=max_rank
+    theta = torchtt.solvers.amen_solve(
+        A, rhs, x0=theta0, nswp=repeats, eps=threshold, rmax=max_rank
     )
 
     # The grounded solution is normalized by construction; renormalize anyway to
@@ -87,7 +87,7 @@ def solve_steady_state_tt(
 
     info = TTSolveInfo(
         residual=steady_state_residual(W_tt, theta),
-        ranks=list(theta.ranks),
+        ranks=list(theta.R),
         n_sweeps=repeats,
         c=c,
     )
@@ -150,15 +150,15 @@ def steady_state_derivative_tt(
     solved with the same grounded operator A. The gauge <1, dTheta> = 0 is
     automatic: <1|A = c<1| and the RHS -(dW)@Theta has zero column sums
     (<1|dW = 0), so the solve returns the correctly gauged derivative."""
-    l = W_tt.order
-    n = W_tt.row_dims[0]
+    l = len(W_tt.N)
+    n = W_tt.N[0]
     wn = W_tt.norm()
     Wn = W_tt * (1.0 / wn) if wn > 0 else W_tt
-    A = (Wn + _grounding_op(l, n) * c).ortho(threshold=threshold)
+    A = (Wn + _grounding_op(l, n) * c).round(eps=threshold)
     # RHS uses the SAME normalization as A (W was scaled by 1/wn).
     rhs = (dW_tt @ theta_tt) * (-1.0 / wn)
-    rhs = rhs.ortho(threshold=threshold)
-    dtheta0 = (theta_tt * 0.0 + rhs).ortho(threshold=threshold)
-    return sle.mals(
-        A, dtheta0, rhs, repeats=repeats, threshold=threshold, max_rank=max_rank
+    rhs = rhs.round(eps=threshold)
+    dtheta0 = (theta_tt * 0.0 + rhs).round(eps=threshold)
+    return torchtt.solvers.amen_solve(
+        A, rhs, x0=dtheta0, nswp=repeats, eps=threshold, rmax=max_rank
     )

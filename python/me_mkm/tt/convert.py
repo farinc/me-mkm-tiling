@@ -7,16 +7,21 @@ dense objects are index-aligned):
 - A microstate index is idx = sum_p s_p * n**(l-1-p): site 0 is the MOST
   significant digit. So a dense Theta reshaped C-order to [n]*l has site p on
   axis p, and TT core p corresponds to lattice site p.
-- scikit_tt stores each core as an order-4 array (r_left, row_dim, col_dim,
-  r_right). Operators (MPOs) have row_dims = col_dims = [n]*l; state vectors
-  (MPS) have col_dims = [1]*l.
-- TT.matricize() contracts the cores into a full matrix (operator) or vector
-  (state) with site 0 outermost -- exactly the encode_state ordering -- so it
-  is the direct densify bridge, no reshaping/transposing needed.
+- torchtt stores operator (MPO) cores as an order-4 array (r_left, row_dim,
+  col_dim, r_right), with row_dims = col_dims = [n]*l. State vectors (MPS)
+  are plain TT tensors with order-3 cores (r_left, n, r_right) -- torchtt
+  distinguishes the two by core ndim, and its solvers (amen_solve) require
+  vectors to be the 3D-core kind rather than a degenerate col_dim=1 operator.
+- TT.full() contracts the cores into a full tensor of shape [n]*l (state) or
+  M1..Md,N1..Nd (operator), with site 0 outermost -- exactly the encode_state
+  ordering -- so a reshape to a vector/matrix is the direct densify bridge, no
+  transposing needed.
 """
 
 import numpy as np
-from scikit_tt.tensor_train import TT
+import torch
+import torchtt
+from torchtt import TT
 
 from me_mkm._me_mkm import MEMKMBuilder
 
@@ -28,18 +33,18 @@ def rank1_operator(l: int, n: int, factors: dict) -> TT:
     cores = []
     for p in range(l):
         m = np.asarray(factors.get(p, identity), dtype=float)
-        cores.append(m.reshape(1, n, n, 1))
+        cores.append(torch.as_tensor(m, dtype=torch.float64).reshape(1, n, n, 1))
     return TT(cores)
 
 
 def rank1_vector(l: int, n: int, factors: dict) -> TT:
-    """Rank-1 MPS whose core at site p is the length-n vector factors[p], or
-    all-ones where absent (col_dims = [1]*l). All TT ranks are 1."""
+    """Rank-1 TT tensor whose core at site p is the length-n vector
+    factors[p], or all-ones where absent. All TT ranks are 1."""
     ones = np.ones(n)
     cores = []
     for p in range(l):
         v = np.asarray(factors.get(p, ones), dtype=float)
-        cores.append(v.reshape(1, n, 1, 1))
+        cores.append(torch.as_tensor(v, dtype=torch.float64).reshape(1, n, 1))
     return TT(cores)
 
 
@@ -75,24 +80,25 @@ def tt_to_dense(theta_tt: TT) -> np.ndarray:
     """Dense state vector of length n**l, index-aligned with encode_state
     (site 0 most significant). Only feasible for small l -- validation and
     observable bridging."""
-    return theta_tt.matricize()
+    return theta_tt.full().reshape(-1).cpu().numpy()
 
 
 def mpo_to_dense(W_tt: TT) -> np.ndarray:
     """Dense (n**l, n**l) matrix of a TT operator, rows/cols in encode_state
     order. Validation only."""
-    return W_tt.matricize()
+    rows, cols = int(np.prod(W_tt.M)), int(np.prod(W_tt.N))
+    return W_tt.full().reshape(rows, cols).cpu().numpy()
 
 
 def tt_inner(x_tt: TT, y_tt: TT) -> float:
-    """Scalar <x, y> = sum_i x_i y_i for two state MPS (via x^T @ y)."""
-    return float(np.real(x_tt.transpose() @ y_tt))
+    """Scalar <x, y> = sum_i x_i y_i for two state TT tensors."""
+    return float(torchtt.dot(x_tt, y_tt))
 
 
 def tt_normalize_prob(theta_tt: TT) -> TT:
     """theta / <1, theta>, so its entries sum to 1 (probability normalization).
     Cheap: <1, theta> is a rank-1 contraction and scaling is a scalar multiply."""
-    l = theta_tt.order
-    n = theta_tt.row_dims[0]
+    l = len(theta_tt.N)
+    n = theta_tt.N[0]
     total = tt_inner(ones_tt(l, n), theta_tt)
     return theta_tt * (1.0 / total)

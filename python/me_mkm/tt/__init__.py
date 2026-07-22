@@ -13,7 +13,7 @@ so cost is polynomial in the tile length l instead of exponential. This is the
 approach of Gelss et al. 2016 (see tt_method_notes.md); it targets tile sizes
 and species counts the dense path cannot reach.
 
-Nothing here is imported by the base package. It depends on `scikit_tt`, which
+Nothing here is imported by the base package. It depends on `torchtt`, which
 lives in the optional `tt` uv dependency group:
 
     uv sync --group tt
@@ -26,14 +26,12 @@ then
 """
 
 try:
-    import scikit_tt.tensor_train  # noqa: F401
+    import torchtt  # noqa: F401
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
     raise ImportError(
-        "me_mkm.tt requires the optional 'scikit_tt' dependency, which is not "
+        "me_mkm.tt requires the optional 'torchtt' dependency, which is not "
         "installed. Install the tt dependency group:\n\n"
-        "    uv sync --group tt\n\n"
-        "(scikit_tt has no PyPI release, so it is pinned to a git commit in "
-        "pyproject.toml's [dependency-groups].)"
+        "    uv sync --group tt\n"
     ) from exc
 
 from me_mkm.tt.convert import (

@@ -11,23 +11,21 @@ dependencies = [
 ]
 
 [dependency-groups]
-# Optional dense/sparse backend (me_mkm.sparse): scipy sparse W assembly and
-# the SuperLU steady-state solve. Installed via `uv sync --group scipy`.
-scipy = [
+sparse = [
     "scipy>=1.17",
 ]
-# Optional tensor-train backend (me_mkm.tt). scikit_tt has no PyPI release,
-# so it is pinned to a commit and installed only via `uv sync --group tt`.
+
 tt = [
-    "scikit-tt @ git+https://github.com/PGelss/scikit_tt@8f4b0a2420cbed8d56238f8751d920137a8f5a16",
+    "torchtt>=0.4.0",
 ]
+
 dev = [
     "maturin>=1.14,<2",
     "notebook>=7.6.0",
     "pytest>=8",
     "pytest-cov>=7.1.0",
     "seaborn>=0.13.2",
-    { include-group = "scipy" },
+    { include-group = "sparse" },
 ]
 
 [tool.maturin]
