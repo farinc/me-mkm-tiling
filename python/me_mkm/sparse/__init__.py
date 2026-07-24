@@ -1,24 +1,9 @@
 """
 Dense/sparse (scipy) backend for ME-MKM.
 
-The exact steady-state path: enumerate all n_species**l microstates, build the
-generator W as a scipy sparse matrix (me_mkm.sparse.generator), factorize it
-once with SuperLU, and reuse the factorization for the stationary distribution
-and every parameter derivative (me_mkm.sparse.steady_state). Production-rate
-observables that consume the sparse per-reaction components live in
-me_mkm.sparse.observables; the purely combinatorial observables (coverages,
-class averages) stay scipy-free in me_mkm.observables.
-
-Nothing here is imported by the base package. It depends on `scipy`, which
-lives in the optional `scipy` uv dependency group:
-
-    uv sync --group scipy
-
-then
-
-    from me_mkm import sparse
-    Wbar = sparse.build_W(builder)
-    Theta_ss, lu = sparse.solve_steady_state(Wbar)
+Enumerates all n_species**l microstates and build the generator W as a scipy sparse
+matrix (me_mkm.sparse.generator). Provides functions for observables all using sparse
+functions.
 """
 
 try:

@@ -2,27 +2,17 @@
 Tensor-train (TT / MPS-MPO) backend for ME-MKM.
 
 An *optional* alternative to the dense/sparse steady-state path
-(me_mkm.sparse). Instead of enumerating all
-n_species**l microstates and factorizing an s x s generator, this backend
+(me_mkm.sparse). Instead of enumerating all s = n_species**l microstates
+and factorizing an s x s generator, this backend
 
 - builds the generator W directly as a tensor-train operator (MPO) from the
   reaction list and tile geometry, with no state enumeration, and
 - solves W Theta = 0 for the stationary distribution entirely in TT format,
+- Provides committor functionality for a 2-basin system.
 
-so cost is polynomial in the tile length l instead of exponential. This is the
-approach of Gelss et al. 2016 (see tt_method_notes.md); it targets tile sizes
-and species counts the dense path cannot reach.
-
-Nothing here is imported by the base package. It depends on `scikit_tt`, which
-lives in the optional `tt` uv dependency group:
-
-    uv sync --group tt
-
-then
-
-    from me_mkm import tt
-    W_tt = tt.build_W_tt(builder)
-    theta_tt, info = tt.solve_steady_state_tt(W_tt)
+so cost is polynomial in the tile length l instead of exponential. This is
+inspired from the approach of Gelss et al. 2016. It does have downsides,
+particularly for cases where interactions become longer ranged.
 """
 
 try:
@@ -50,8 +40,10 @@ from me_mkm.tt.convert import (
 from me_mkm.tt.committor import (
     committor_tt,
     committor_tt_residual,
+    threshold_projector_tt,
 )
 from me_mkm.tt.observables import (
+    committor_class_profile_tt,
     coverage_distribution_tt,
     coverage_mean_tt,
     production_rate_tt,
@@ -99,4 +91,6 @@ __all__ = [
     # committor
     "committor_tt",
     "committor_tt_residual",
+    "threshold_projector_tt",
+    "committor_class_profile_tt",
 ]

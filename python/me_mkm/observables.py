@@ -110,13 +110,17 @@ def coverage_mean(builder: MEMKMBuilder, Theta) -> np.ndarray:
     result gains a matching trailing axis.
     """
     Theta = np.asarray(Theta)
-    # get_all_microstates returns bytes rows (pyo3's mapping for Vec<u8>), so
-    # each row must be unpacked with list() before np.asarray can build an int array.
-    states = np.array(
-        [list(row) for row in builder.get_all_microstates()], dtype=int
-    )  # (n_states, l)
-    counts = np.stack([(states == s).sum(axis=1) for s in range(builder.n_species)])
-    return (counts @ Theta) / builder.l  # (base,) or (base, n_t)
+    l = builder.l
+    # One pass over the classes (same walk as coverage_distribution) accumulates
+    # each species' total site-count directly, without ever materializing the
+    # dense (n_states, l) microstate array or looping (states == s) over it.
+    total = np.zeros((builder.n_species, *Theta.shape[1:]))
+    for counts, idxs in coverage_classes(builder):
+        mass = Theta[idxs].sum(axis=0)
+        total[0] += (l - counts.sum()) * mass
+        for code, n in enumerate(counts, start=1):
+            total[code] += n * mass
+    return total / l  # (base,) or (base, n_t)
 
 
 def independent_site_distribution(builder: MEMKMBuilder, coverage) -> np.ndarray:

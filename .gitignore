@@ -9,6 +9,12 @@ __pycache__/
 # C extensions
 *.so
 
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
 # Distribution / packaging
 .Python
 .venv/
@@ -80,8 +86,12 @@ pdfs/
 !src/bin/
 !src/bin/*.rs
 
-# Graphify
+# Graphify and some AI crap
 graphify-out/
+.claude
 
 # Papers
 papers/
+
+# Ignore the .cargo
+.cargo/

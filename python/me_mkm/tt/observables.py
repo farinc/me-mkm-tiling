@@ -109,3 +109,65 @@ def coverage_distribution_tt(builder: MEMKMBuilder, theta_tt: TT) -> np.ndarray:
         # P[s,k] = (1/(l+1)) sum_m G(z_m) exp(-2pi i m k/(l+1)) = fft(G)[k]/(l+1).
         P[s] = np.fft.fft(G).real / (l + 1)
     return P
+
+
+def committor_class_profile_tt(
+    builder: MEMKMBuilder, q_tt: TT, theta_tt: TT, threshold: float = 1e-12
+) -> tuple:
+    """Committor mean and (weighted) variance per coverage class, TT analog of
+    observables.committor_class_profile.
+
+    q_tt     : committor MPS (me_mkm.tt.committor_tt), index-aligned with
+        theta_tt via the same builder.
+    theta_tt : weighting distribution MPS, P[q | class]. There's no
+        Theta_ss=None branch here -- TT has no microstate list to average
+        over directly -- so for the dense function's equal-weight-per-
+        microstate default, pass the uniform distribution instead:
+        convert.product_state_tt(builder, np.full(builder.n_species,
+        1 / builder.n_species)).
+
+    Returns (profile, spread), each a dict keyed by the class counts tuple
+    exactly as observables.committor_class_profile. Extends
+    coverage_distribution_tt's per-species generating function to the joint
+    (n_species - 1)-dimensional count vector, evaluated once each for the
+    Theta, q*Theta, and q^2*Theta mass (the last two via the diag-MPO
+    Hadamard-product trick), so cost stays polynomial in l for a fixed
+    species count rather than requiring microstate enumeration.
+    """
+    l, n = builder.l, builder.n_species
+    m = n - 1
+    all_sites = list(range(l))
+    qtheta = (q_tt.diag(all_sites) @ theta_tt).ortho(threshold=threshold)
+    q2 = (q_tt.diag(all_sites) @ q_tt).ortho(threshold=threshold)
+    q2theta = (q2.diag(all_sites) @ theta_tt).ortho(threshold=threshold)
+
+    zs = np.exp(2j * np.pi * np.arange(l + 1) / (l + 1))
+
+    def joint_mass(vec_tt: TT) -> np.ndarray:
+        """Inverse (l+1)^m-point DFT of the joint generating function
+        G(z_1..z_m) = <prod_p (1 + sum_s (z_s - 1) e_s)| vec_tt>, recovering
+        the full per-class mass tensor indexed by (n_1,...,n_m)."""
+        G = np.empty((l + 1,) * m, dtype=complex)
+        for idx in np.ndindex(*G.shape):
+            factor = np.ones(n, dtype=complex)
+            for s in range(1, n):
+                factor[s] = zs[idx[s - 1]]
+            G[idx] = _product_contract(vec_tt, {p: factor for p in range(l)})
+        return np.fft.fftn(G).real / (l + 1) ** m
+
+    mass = joint_mass(theta_tt)
+    qmass = joint_mass(qtheta)
+    q2mass = joint_mass(q2theta)
+
+    profile, spread = {}, {}
+    for counts in np.ndindex(*mass.shape):
+        if sum(counts) > l:
+            continue
+        w = mass[counts]
+        if w <= 0.0:
+            profile[counts], spread[counts] = 0.0, 0.0
+            continue
+        mean = qmass[counts] / w
+        profile[counts] = float(mean)
+        spread[counts] = float(q2mass[counts] / w - mean**2)
+    return profile, spread

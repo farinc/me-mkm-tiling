@@ -202,3 +202,59 @@ def test_committor_tt_matches_dense():
     q_tt = tt.committor_tt(W_tt, siteA, siteB, max_rank=40, repeats=40)
     assert tt.committor_tt_residual(W_tt, q_tt, siteA, siteB) < 1e-8
     assert np.allclose(tt.tt_to_dense(q_tt), q_dense, atol=1e-8)
+
+
+def test_threshold_projector_tt_matches_dense_mask():
+    builder = _langmuir(sites=6)
+    l, n = builder.l, builder.n_species
+
+    P_ge = tt.threshold_projector_tt(l, n, species=1, k=4, at_least=True)
+    mask_ge = microstate_mask(builder, A=(4 / l, None))
+    assert np.array_equal(np.diag(tt.mpo_to_dense(P_ge)).astype(bool), mask_ge)
+
+    P_le = tt.threshold_projector_tt(l, n, species=1, k=2, at_least=False)
+    mask_le = microstate_mask(builder, A=(None, 2 / l))
+    assert np.array_equal(np.diag(tt.mpo_to_dense(P_le)).astype(bool), mask_le)
+
+
+def test_committor_tt_threshold_basins_match_dense():
+    # Coverage-fraction basins (not per-site products): A = at most 2 A-sites,
+    # B = at least 4 A-sites out of l=6.
+    builder = _langmuir(sites=6)
+    l, n = builder.l, builder.n_species
+    k_A, k_B = 2, 4
+
+    in_A = microstate_mask(builder, A=(None, k_A / l))
+    in_B = microstate_mask(builder, A=(k_B / l, None))
+    q_dense = committor(build_W(builder, steady_state=False), in_A, in_B)
+
+    W_tt = tt.build_W_tt(builder)
+    P_A = tt.threshold_projector_tt(l, n, species=1, k=k_A, at_least=False)
+    P_B = tt.threshold_projector_tt(l, n, species=1, k=k_B, at_least=True)
+    q_tt = tt.committor_tt(W_tt, P_A, P_B, max_rank=40, repeats=40)
+    assert tt.committor_tt_residual(W_tt, q_tt, P_A, P_B) < 1e-8
+    assert np.allclose(tt.tt_to_dense(q_tt), q_dense, atol=1e-8)
+
+
+def test_committor_class_profile_tt_matches_dense():
+    builder = _langmuir()
+    l, n = builder.l, builder.n_species
+    in_A = microstate_mask(builder, A=(None, 0.0))
+    in_B = microstate_mask(builder, A=(1.0, 1.0))
+    W = build_W(builder, steady_state=False)
+    q_dense = committor(W, in_A, in_B)
+    profile_dense, spread_dense = committor_class_profile(builder, q_dense)
+
+    e_star, e_full = np.zeros(n), np.zeros(n)
+    e_star[0], e_full[1] = 1.0, 1.0
+    siteA = {p: e_star for p in range(l)}
+    siteB = {p: e_full for p in range(l)}
+    W_tt = tt.build_W_tt(builder)
+    q_tt = tt.committor_tt(W_tt, siteA, siteB, max_rank=40, repeats=40)
+
+    uniform = tt.product_state_tt(builder, np.full(n, 1.0 / n))
+    profile_tt, spread_tt = tt.committor_class_profile_tt(builder, q_tt, uniform)
+
+    for k in profile_dense:
+        assert profile_tt[k] == pytest.approx(profile_dense[k], abs=1e-6)
+        assert spread_tt[k] == pytest.approx(spread_dense[k], abs=1e-6)
