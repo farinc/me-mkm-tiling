@@ -18,8 +18,8 @@ from me_mkm import (
     MEMKMBuilder,
     TileSettings,
     Reaction,
-    BepInteraction,
-    InitialStateInteraction,
+    BepBarrierModel,
+    FrozenTransitionStateBarrier,
     coverage_mean,
 )
 from me_mkm.sparse import (
@@ -52,7 +52,7 @@ def steady_state(W):
 
 def make_builder(k_ads=1.0, k_des=1.0, eps=0.0, kbt=1.0):
     """Single-adsorbate Langmuir builder, optionally with A-A interaction."""
-    interaction = InitialStateInteraction([[0.0, 0.0], [0.0, eps]], kbt=kbt)
+    interaction = FrozenTransitionStateBarrier([[0.0, 0.0], [0.0, eps]], kbt=kbt)
     reactions = [
         Reaction([0], [1], rate=k_ads, name="ads"),
         Reaction([1], [0], rate=k_des, name="des"),
@@ -321,7 +321,7 @@ class TestDWdbetaOmegaBEP:
         eps, beta0, h = 0.4, 1.3, 1e-6
 
         def builder_at(beta):
-            im = BepInteraction([[0.0, 0.0], [0.0, eps]], 0.35, kbt=1.0 / beta)
+            im = BepBarrierModel([[0.0, 0.0], [0.0, eps]], 0.35, kbt=1.0 / beta)
             reactions = [
                 Reaction([0], [1], rate=1.2, name="ads"),
                 Reaction([1], [0], rate=0.7, name="des"),

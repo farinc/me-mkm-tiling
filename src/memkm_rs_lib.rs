@@ -66,19 +66,11 @@ fn state_counts(idx: usize, l: usize, base: usize) -> Vec<usize> {
 /// energy one reacting site contributes per non-reacting neighbor
 /// (`neighbor_energy`), and the reacting pair's mutual-bond energy
 /// (`pair_energy`). Everything else is derived:
-///
 ///   - the scalar correction `corr = exp(-ΔE/kbt)` is aggregated from them by
 ///     the default `rate_correction_and_delta_e` (the dense/sparse path), and
 ///   - the per-neighbor energy *row* `site_energy_row` (the tensor-train path's
 ///     per-site diagonal factor) is the same primitive sampled over species.
-///
-/// So a new interaction is added by implementing just `neighbor_energy` and
-/// `pair_energy` (plus `kbt`/`n_species`/`trivial`); both backends pick it up
-/// with no further changes, *provided* ΔE stays additive over neighbors (the
-/// condition that makes it a rank-1 tensor operator). A correction that is a
-/// nonlinear function of the aggregated neighbour energy cannot be expressed
-/// this way and needs a different representation.
-pub trait InteractionModel: std::fmt::Debug + Send + Sync {
+pub trait MicrostateHamiltonian: std::fmt::Debug + Send + Sync {
     /// True when every correction this model can produce is exactly 1.
     fn trivial(&self) -> bool;
 
@@ -89,8 +81,7 @@ pub trait InteractionModel: std::fmt::Debug + Send + Sync {
     fn n_species(&self) -> usize;
 
     /// Energy a reacting site changing `sp_in -> sp_out` contributes to ΔE for
-    /// each non-reacting neighbor of species `sp_nbr`. The single source of
-    /// truth for the model's per-neighbor physics.
+    /// each non-reacting neighbor of species `sp_nbr`.
     fn neighbor_energy(&self, sp_in: u8, sp_out: u8, sp_nbr: u8) -> f64;
 
     /// Energy the reacting pair's mutual bond contributes to ΔE, for a pair
@@ -99,8 +90,7 @@ pub trait InteractionModel: std::fmt::Debug + Send + Sync {
     fn pair_energy(&self, in0: u8, out0: u8, in1: u8, out1: u8) -> f64;
 
     /// The per-neighbor energy row [neighbor_energy(sp_in, sp_out, s) for every
-    /// species s] — the tensor-train backend's per-site diagonal factor before
-    /// the exp(-·/kbt). Default: sample `neighbor_energy` over all species.
+    /// species s]
     fn site_energy_row(&self, sp_in: u8, sp_out: u8) -> Vec<f64> {
         (0..self.n_species() as u8)
             .map(|s| self.neighbor_energy(sp_in, sp_out, s))
@@ -170,7 +160,7 @@ pub trait InteractionModel: std::fmt::Debug + Send + Sync {
 
     /// The concrete model's __repr__, for embedding in Reaction's repr.
     fn repr_str(&self) -> String;
-    fn clone_box(&self) -> Box<dyn InteractionModel>;
+    fn clone_box(&self) -> Box<dyn MicrostateHamiltonian>;
     fn to_py(&self, py: Python) -> Py<PyAny>;
 }
 
@@ -189,7 +179,7 @@ fn all_zero(epsilon: &[Vec<f64>]) -> bool {
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
-pub struct InitialStateInteraction {
+pub struct FrozenTransitionStateBarrier {
     #[pyo3(get)]
     pub epsilon: Vec<Vec<f64>>,
     #[pyo3(get)]
@@ -199,7 +189,7 @@ pub struct InitialStateInteraction {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl InitialStateInteraction {
+impl FrozenTransitionStateBarrier {
     #[new]
     #[pyo3(signature = (epsilon, kbt=1.0))]
     pub fn new(epsilon: Vec<Vec<f64>>, kbt: f64) -> Self {
@@ -218,8 +208,8 @@ impl InitialStateInteraction {
     }
 
     /// BEP model with the same energies at the given ω.
-    pub fn to_bep(&self, omega: f64) -> BepInteraction {
-        BepInteraction::new(self.epsilon.clone(), omega, self.kbt)
+    pub fn to_bep(&self, omega: f64) -> BepBarrierModel {
+        BepBarrierModel::new(self.epsilon.clone(), omega, self.kbt)
     }
 
     /// Per-neighbor energy row for a reacting site sp_in -> sp_out (initial
@@ -227,28 +217,31 @@ impl InitialStateInteraction {
     /// the tensor-train backend; see the trait method.
     #[pyo3(name = "site_energy_row")]
     fn site_energy_row_py(&self, sp_in: u8, sp_out: u8) -> Vec<f64> {
-        InteractionModel::site_energy_row(self, sp_in, sp_out)
+        MicrostateHamiltonian::site_energy_row(self, sp_in, sp_out)
     }
 
     /// Reacting pair's mutual-bond energy. Exposed for the tensor-train backend.
     #[pyo3(name = "pair_energy")]
     fn pair_energy_py(&self, in0: u8, out0: u8, in1: u8, out1: u8) -> f64 {
-        InteractionModel::pair_energy(self, in0, out0, in1, out1)
+        MicrostateHamiltonian::pair_energy(self, in0, out0, in1, out1)
     }
 
     fn __repr__(&self) -> String {
         if self.trivial {
-            format!("InitialStateInteraction(noninteracting, kBT={})", self.kbt)
+            format!(
+                "FrozenTransitionStateBarrier(noninteracting, kBT={})",
+                self.kbt
+            )
         } else {
             format!(
-                "InitialStateInteraction(epsilon={:?}, kBT={})",
+                "FrozenTransitionStateBarrier(epsilon={:?}, kBT={})",
                 self.epsilon, self.kbt
             )
         }
     }
 }
 
-impl InteractionModel for InitialStateInteraction {
+impl MicrostateHamiltonian for FrozenTransitionStateBarrier {
     fn trivial(&self) -> bool {
         self.trivial
     }
@@ -278,7 +271,7 @@ impl InteractionModel for InitialStateInteraction {
         self.__repr__()
     }
 
-    fn clone_box(&self) -> Box<dyn InteractionModel> {
+    fn clone_box(&self) -> Box<dyn MicrostateHamiltonian> {
         Box::new(self.clone())
     }
 
@@ -300,7 +293,7 @@ impl InteractionModel for InitialStateInteraction {
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
-pub struct BepInteraction {
+pub struct BepBarrierModel {
     #[pyo3(get)]
     pub epsilon: Vec<Vec<f64>>,
     #[pyo3(get)]
@@ -312,7 +305,7 @@ pub struct BepInteraction {
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl BepInteraction {
+impl BepBarrierModel {
     #[new]
     #[pyo3(signature = (epsilon, omega, kbt=1.0))]
     pub fn new(epsilon: Vec<Vec<f64>>, omega: f64, kbt: f64) -> Self {
@@ -334,24 +327,24 @@ impl BepInteraction {
     /// the tensor-train backend; see the trait method.
     #[pyo3(name = "site_energy_row")]
     fn site_energy_row_py(&self, sp_in: u8, sp_out: u8) -> Vec<f64> {
-        InteractionModel::site_energy_row(self, sp_in, sp_out)
+        MicrostateHamiltonian::site_energy_row(self, sp_in, sp_out)
     }
 
     /// Reacting pair's mutual-bond energy. Exposed for the tensor-train backend.
     #[pyo3(name = "pair_energy")]
     fn pair_energy_py(&self, in0: u8, out0: u8, in1: u8, out1: u8) -> f64 {
-        InteractionModel::pair_energy(self, in0, out0, in1, out1)
+        MicrostateHamiltonian::pair_energy(self, in0, out0, in1, out1)
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "BepInteraction(epsilon={:?}, omega={}, kBT={})",
+            "BepBarrierModel(epsilon={:?}, omega={}, kBT={})",
             self.epsilon, self.omega, self.kbt
         )
     }
 }
 
-impl InteractionModel for BepInteraction {
+impl MicrostateHamiltonian for BepBarrierModel {
     fn trivial(&self) -> bool {
         self.trivial
     }
@@ -385,7 +378,7 @@ impl InteractionModel for BepInteraction {
         self.__repr__()
     }
 
-    fn clone_box(&self) -> Box<dyn InteractionModel> {
+    fn clone_box(&self) -> Box<dyn MicrostateHamiltonian> {
         Box::new(self.clone())
     }
 
@@ -396,29 +389,29 @@ impl InteractionModel for BepInteraction {
     }
 }
 
-impl Clone for Box<dyn InteractionModel> {
+impl Clone for Box<dyn MicrostateHamiltonian> {
     fn clone(&self) -> Self {
         self.clone_box()
     }
 }
 
-impl<'a, 'py> FromPyObject<'a, 'py> for Box<dyn InteractionModel> {
+impl<'a, 'py> FromPyObject<'a, 'py> for Box<dyn MicrostateHamiltonian> {
     type Error = PyErr;
 
     fn extract(ob: pyo3::Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
-        if let Ok(m) = ob.extract::<InitialStateInteraction>() {
+        if let Ok(m) = ob.extract::<FrozenTransitionStateBarrier>() {
             return Ok(Box::new(m));
         }
-        if let Ok(m) = ob.extract::<BepInteraction>() {
+        if let Ok(m) = ob.extract::<BepBarrierModel>() {
             return Ok(Box::new(m));
         }
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "expected an interaction model (InitialStateInteraction or BepInteraction)",
+            "expected an interaction model (FrozenTransitionStateBarrier or BepBarrierModel)",
         ))
     }
 }
 
-impl<'py> IntoPyObject<'py> for Box<dyn InteractionModel> {
+impl<'py> IntoPyObject<'py> for Box<dyn MicrostateHamiltonian> {
     type Target = PyAny;
     type Output = Bound<'py, PyAny>;
     type Error = std::convert::Infallible;
@@ -428,10 +421,10 @@ impl<'py> IntoPyObject<'py> for Box<dyn InteractionModel> {
     }
 }
 
-impl pyo3_stub_gen::PyStubType for Box<dyn InteractionModel> {
+impl pyo3_stub_gen::PyStubType for Box<dyn MicrostateHamiltonian> {
     fn type_output() -> pyo3_stub_gen::TypeInfo {
         pyo3_stub_gen::TypeInfo {
-            name: "InitialStateInteraction | BepInteraction".to_string(),
+            name: "FrozenTransitionStateBarrier | BepBarrierModel".to_string(),
             import: Default::default(),
             source_module: None,
             type_refs: Default::default(),
@@ -452,9 +445,6 @@ impl pyo3_stub_gen::PyStubType for Box<dyn InteractionModel> {
 ///                Defaults to name if empty.
 /// rate_symbol_latex : Optional LaTeX string for the rate constant symbol (e.g. r"k_{\mathrm{ads}}")
 /// interaction  : optional per-reaction interaction model (any of the
-///                InteractionModel implementors, e.g. InitialStateInteraction
-///                or BepInteraction); if None the builder's global model
-///                (default noninteracting) is used.
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
@@ -474,7 +464,7 @@ pub struct Reaction {
     pub rate_symbol: String,
     #[pyo3(get, set)]
     pub rate_symbol_latex: Option<String>,
-    interaction: Option<Box<dyn InteractionModel>>,
+    interaction: Option<Box<dyn MicrostateHamiltonian>>,
 }
 
 #[gen_stub_pymethods]
@@ -489,7 +479,7 @@ impl Reaction {
         name: String,
         rate_symbol: String,
         rate_symbol_latex: Option<String>,
-        interaction: Option<Box<dyn InteractionModel>>,
+        interaction: Option<Box<dyn MicrostateHamiltonian>>,
     ) -> PyResult<Self> {
         if pattern_in.len() != pattern_out.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -514,12 +504,12 @@ impl Reaction {
 
     /// Get the per-reaction interaction model (None if not set: the builder's
     /// global model applies).
-    pub fn get_interaction(&self) -> Option<Box<dyn InteractionModel>> {
+    pub fn get_interaction(&self) -> Option<Box<dyn MicrostateHamiltonian>> {
         self.interaction.clone()
     }
 
     /// Set a per-reaction interaction model.
-    pub fn set_interaction(&mut self, interaction: Option<Box<dyn InteractionModel>>) {
+    pub fn set_interaction(&mut self, interaction: Option<Box<dyn MicrostateHamiltonian>>) {
         self.interaction = interaction;
     }
 
@@ -539,7 +529,7 @@ impl Reaction {
         }
     }
 
-    pub fn with_interaction(&self, interaction: Option<Box<dyn InteractionModel>>) -> Self {
+    pub fn with_interaction(&self, interaction: Option<Box<dyn MicrostateHamiltonian>>) -> Self {
         Self {
             interaction,
             ..self.clone()
@@ -568,8 +558,8 @@ impl Reaction {
     #[inline]
     fn effective_interaction<'a>(
         &'a self,
-        fallback: &'a dyn InteractionModel,
-    ) -> &'a dyn InteractionModel {
+        fallback: &'a dyn MicrostateHamiltonian,
+    ) -> &'a dyn MicrostateHamiltonian {
         match &self.interaction {
             Some(m) => m.as_ref(),
             None => fallback,
@@ -773,7 +763,7 @@ impl Tile {
 pub struct MEMKMBuilder {
     tile: Tile,
     reactions: Vec<Reaction>,
-    interaction: Box<dyn InteractionModel>,
+    interaction: Box<dyn MicrostateHamiltonian>,
     #[pyo3(get)]
     pub tile_settings: TileSettings,
     #[pyo3(get)]
@@ -793,7 +783,7 @@ impl MEMKMBuilder {
         tile_settings: TileSettings,
         reactions: Vec<Reaction>,
         species_names: Vec<String>,
-        interaction: Option<Box<dyn InteractionModel>>,
+        interaction: Option<Box<dyn MicrostateHamiltonian>>,
     ) -> PyResult<Self> {
         // species_names fixes the species count: base = n_species, so a site
         // holds one of n_species codes and the state space is n_species ** l.
@@ -817,8 +807,8 @@ impl MEMKMBuilder {
         // No interaction model given -> noninteracting (all corrections = 1),
         // sized for n_species species.
         let interaction = interaction.unwrap_or_else(|| {
-            Box::new(InitialStateInteraction::noninteracting(n_species, 1.0))
-                as Box<dyn InteractionModel>
+            Box::new(FrozenTransitionStateBarrier::noninteracting(n_species, 1.0))
+                as Box<dyn MicrostateHamiltonian>
         });
         Ok(Self {
             tile,
@@ -866,10 +856,10 @@ impl MEMKMBuilder {
         self.reactions.len()
     }
 
-    pub fn set_interaction(&mut self, interaction: Box<dyn InteractionModel>) {
+    pub fn set_interaction(&mut self, interaction: Box<dyn MicrostateHamiltonian>) {
         self.interaction = interaction;
     }
-    pub fn get_interaction(&self) -> Box<dyn InteractionModel> {
+    pub fn get_interaction(&self) -> Box<dyn MicrostateHamiltonian> {
         self.interaction.clone()
     }
 
@@ -1292,8 +1282,8 @@ impl MEMKMBuilder {
 #[pymodule]
 fn _me_mkm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TileSettings>()?;
-    m.add_class::<InitialStateInteraction>()?;
-    m.add_class::<BepInteraction>()?;
+    m.add_class::<FrozenTransitionStateBarrier>()?;
+    m.add_class::<BepBarrierModel>()?;
     m.add_class::<Reaction>()?;
     m.add_class::<MEMKMBuilder>()?;
     m.add_function(wrap_pyfunction!(decode_state, m)?)?;

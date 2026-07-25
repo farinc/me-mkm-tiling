@@ -9,8 +9,8 @@ Fish-scale   (Adams 2025) — l=8,  Topology.square(d=3) — 4-reg, 16 bond pair
 import numpy as np
 import pytest
 from me_mkm import (
-    BepInteraction,
-    InitialStateInteraction,
+    BepBarrierModel,
+    FrozenTransitionStateBarrier,
     MEMKMBuilder,
     Reaction,
     TileSettings,
@@ -202,7 +202,7 @@ class TestInteractions:
     @pytest.mark.parametrize("tile_name", TILES)
     def test_attractive_raises_coverage(self, tile_name):
         eps = 0.5  # kBT units
-        interaction = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+        interaction = FrozenTransitionStateBarrier([[0.0, 0.0], [0.0, eps]])
         builder_ni = simple_builder(tile_name, k_ads=1.0, k_des=1.0)
         builder_int = simple_builder(
             tile_name, k_ads=1.0, k_des=1.0, interaction=interaction
@@ -222,7 +222,7 @@ class TestInteractions:
     @pytest.mark.parametrize("tile_name", TILES)
     def test_repulsive_lowers_coverage(self, tile_name):
         eps = -0.5
-        interaction = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+        interaction = FrozenTransitionStateBarrier([[0.0, 0.0], [0.0, eps]])
         builder_ni = simple_builder(tile_name, k_ads=1.0, k_des=1.0)
         builder_int = simple_builder(
             tile_name, k_ads=1.0, k_des=1.0, interaction=interaction
@@ -242,8 +242,8 @@ class TestInteractions:
 
 class TestOmegaBEP:
     """
-    InitialStateInteraction pins the TS at the interaction-free reference:
-    correction exp(-S_in/kBT). BepInteraction(eps, w) is the BEP scheme,
+    FrozenTransitionStateBarrier pins the TS at the interaction-free reference:
+    correction exp(-S_in/kBT). BepBarrierModel(eps, w) is the BEP scheme,
     exp(-w*(S_in - S_out)/kBT), where S_out re-evaluates the reacting sites
     with their pattern_out species. A forward/reverse pair whose omegas sum
     to 1 shares the base scheme's equilibrium (detailed balance), while the
@@ -254,7 +254,7 @@ class TestOmegaBEP:
     def test_omega_zero_is_uncorrected(self, tile_name):
         # omega=0 is an early TS: rates blind to interactions, W identical
         # to the noninteracting builder even with nonzero eps.
-        im = BepInteraction([[0.0, 0.0], [0.0, 0.7]], 0.0)
+        im = BepBarrierModel([[0.0, 0.0], [0.0, 0.7]], 0.0)
         W_int = build_W(simple_builder(tile_name, interaction=im))
         W_ni = build_W(simple_builder(tile_name))
         assert np.allclose(W_int.toarray(), W_ni.toarray())
@@ -266,16 +266,16 @@ class TestOmegaBEP:
         # omega=1 on des and omega=0 on ads reproduce the base-scheme W exactly.
         eps = 0.5
         base = simple_builder(
-            tile_name, interaction=InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+            tile_name, interaction=FrozenTransitionStateBarrier([[0.0, 0.0], [0.0, eps]])
         )
         reactions = [
             Reaction(
                 [0], [1], rate=1.0, name="ads",
-                interaction=BepInteraction([[0.0, 0.0], [0.0, eps]], 0.0),
+                interaction=BepBarrierModel([[0.0, 0.0], [0.0, eps]], 0.0),
             ),
             Reaction(
                 [1], [0], rate=1.0, name="des",
-                interaction=BepInteraction([[0.0, 0.0], [0.0, eps]], 1.0),
+                interaction=BepBarrierModel([[0.0, 0.0], [0.0, eps]], 1.0),
             ),
         ]
         bep = MEMKMBuilder(
@@ -293,11 +293,11 @@ class TestOmegaBEP:
         # though the individual rates are not.
         eps = 0.6
         base = simple_builder(
-            tile_name, interaction=InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+            tile_name, interaction=FrozenTransitionStateBarrier([[0.0, 0.0], [0.0, eps]])
         )
 
         def im(w):
-            return BepInteraction([[0.0, 0.0], [0.0, eps]], w)
+            return BepBarrierModel([[0.0, 0.0], [0.0, eps]], w)
 
         reactions = [
             Reaction([0], [1], rate=1.0, name="ads", interaction=im(omega_ads)),
@@ -328,7 +328,7 @@ class TestOmegaBEP:
             )
             return build_W(builder).toarray()[0, from_idx]
 
-        im = InitialStateInteraction([[0.0, 0.0], [0.0, eps]])
+        im = FrozenTransitionStateBarrier([[0.0, 0.0], [0.0, eps]])
         assert w_entry(im) == pytest.approx(np.exp(-eps))
         assert w_entry(im.to_bep(0.5)) == pytest.approx(np.exp(-eps / 2))
 
@@ -347,7 +347,7 @@ class TestCoverageDistribution:
     EPS = -0.5  # repulsive
 
     def repulsive_builder(self, tile_name):
-        interaction = InitialStateInteraction([[0.0, 0.0], [0.0, self.EPS]])
+        interaction = FrozenTransitionStateBarrier([[0.0, 0.0], [0.0, self.EPS]])
         return simple_builder(
             tile_name, k_ads=self.R, k_des=1.0, interaction=interaction
         )

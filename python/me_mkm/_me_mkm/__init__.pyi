@@ -4,8 +4,8 @@
 import builtins
 import typing
 __all__ = [
-    "BepInteraction",
-    "InitialStateInteraction",
+    "BepBarrierModel",
+    "FrozenTransitionStateBarrier",
     "MEMKMBuilder",
     "Reaction",
     "TileSettings",
@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 @typing.final
-class BepInteraction:
+class BepBarrierModel:
     r"""
     Brønsted-Evans-Polanyi (proximity factor ω): the TS energy interpolates
     linearly between initial and final state, so only the ω-weighted change
@@ -32,8 +32,8 @@ class BepInteraction:
     def omega(self) -> builtins.float: ...
     @property
     def kbt(self) -> builtins.float: ...
-    def __new__(cls, epsilon: typing.Sequence[typing.Sequence[builtins.float]], omega: builtins.float, kbt: builtins.float = 1.0) -> BepInteraction: ...
-    def with_omega(self, omega: builtins.float) -> BepInteraction:
+    def __new__(cls, epsilon: typing.Sequence[typing.Sequence[builtins.float]], omega: builtins.float, kbt: builtins.float = 1.0) -> BepBarrierModel: ...
+    def with_omega(self, omega: builtins.float) -> BepBarrierModel:
         r"""
         Copy at a different ω; energies and kBT unchanged.
         """
@@ -49,7 +49,7 @@ class BepInteraction:
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
-class InitialStateInteraction:
+class FrozenTransitionStateBarrier:
     r"""
     Initial-state approximation: the transition state carries no lateral
     interactions ("pinned" at the interaction-free reference), so the full
@@ -64,10 +64,10 @@ class InitialStateInteraction:
     def epsilon(self) -> builtins.list[builtins.list[builtins.float]]: ...
     @property
     def kbt(self) -> builtins.float: ...
-    def __new__(cls, epsilon: typing.Sequence[typing.Sequence[builtins.float]], kbt: builtins.float = 1.0) -> InitialStateInteraction: ...
+    def __new__(cls, epsilon: typing.Sequence[typing.Sequence[builtins.float]], kbt: builtins.float = 1.0) -> FrozenTransitionStateBarrier: ...
     @staticmethod
-    def noninteracting(n_species: builtins.int, kbt: builtins.float = 1.0) -> InitialStateInteraction: ...
-    def to_bep(self, omega: builtins.float) -> BepInteraction:
+    def noninteracting(n_species: builtins.int, kbt: builtins.float = 1.0) -> FrozenTransitionStateBarrier: ...
+    def to_bep(self, omega: builtins.float) -> BepBarrierModel:
         r"""
         BEP model with the same energies at the given ω.
         """
@@ -126,13 +126,13 @@ class MEMKMBuilder:
         """
     @property
     def n_rxns(self) -> builtins.int: ...
-    def __new__(cls, tile_settings: TileSettings, reactions: typing.Sequence[Reaction], species_names: typing.Sequence[builtins.str], interaction: typing.Optional[InitialStateInteraction | BepInteraction] = None) -> MEMKMBuilder: ...
+    def __new__(cls, tile_settings: TileSettings, reactions: typing.Sequence[Reaction], species_names: typing.Sequence[builtins.str], interaction: typing.Optional[FrozenTransitionStateBarrier | BepBarrierModel] = None) -> MEMKMBuilder: ...
     def add_reaction(self, rxn: Reaction) -> None: ...
     def set_reactions(self, reactions: typing.Sequence[Reaction]) -> None: ...
     def get_reactions(self) -> builtins.list[Reaction]: ...
     def clear_reactions(self) -> None: ...
-    def set_interaction(self, interaction: InitialStateInteraction | BepInteraction) -> None: ...
-    def get_interaction(self) -> InitialStateInteraction | BepInteraction: ...
+    def set_interaction(self, interaction: FrozenTransitionStateBarrier | BepBarrierModel) -> None: ...
+    def get_interaction(self) -> FrozenTransitionStateBarrier | BepBarrierModel: ...
     def neighbor_pairs(self) -> builtins.list[tuple[builtins.int, builtins.int]]:
         r"""
         Undirected neighbor pairs (i < j), one entry per bond — the same
@@ -169,6 +169,10 @@ class MEMKMBuilder:
         r"""
         Full dynamical-form W as COO triples (rows, cols, vals); hand these
         straight to scipy.sparse on the Python side.
+        
+        Diagonal = -sum of outgoing rates: compute_offdiag's output plus the
+        diag vector appended as the matrix diagonal, at each reaction's
+        current rate.
         """
     def build_w_coo_range(self, row_start: builtins.int, row_end: builtins.int) -> tuple[builtins.list[builtins.int], builtins.list[builtins.int], builtins.list[builtins.float]]:
         r"""
@@ -185,7 +189,12 @@ class MEMKMBuilder:
         W is linear in each reaction's rate constant, so for time-dependent
         rates k_i(t):  W(t) = Σ k_i(t) · components[i]. Useful for forced
         oscillations / Floquet-type driving, where rebuilding the full W from
-        scratch at every ODE step would be wasteful.
+        scratch at every ODE step would be wasteful: given the components,
+        recovering W for any rate vector is just a weighted sum of sparse
+        matrices, no re-walk of states/reactions/sites needed. Same
+        `step_edges` walk as `build_w_coo`, just keeping per-reaction
+        rows/cols/vals/diag instead of one shared set, and corr instead of
+        rxn.rate * corr (rxn.rate is multiplied in on the Python side).
         """
     def build_dw_dbeta_components_coo(self) -> builtins.list[tuple[builtins.list[builtins.int], builtins.list[builtins.int], builtins.list[builtins.float]]]:
         r"""
@@ -212,8 +221,8 @@ class Reaction:
                    Defaults to name if empty.
     rate_symbol_latex : Optional LaTeX string for the rate constant symbol (e.g. r"k_{\mathrm{ads}}")
     interaction  : optional per-reaction interaction model (any of the
-                   InteractionModel implementors, e.g. InitialStateInteraction
-                   or BepInteraction); if None the builder's global model
+                   InteractionModel implementors, e.g. FrozenTransitionStateBarrier
+                   or BepBarrierModel); if None the builder's global model
                    (default noninteracting) is used.
     """
     @property
@@ -240,19 +249,19 @@ class Reaction:
     def rate_symbol_latex(self) -> typing.Optional[builtins.str]: ...
     @rate_symbol_latex.setter
     def rate_symbol_latex(self, value: typing.Optional[builtins.str]) -> None: ...
-    def __new__(cls, pattern_in: typing.Sequence[builtins.int], pattern_out: typing.Sequence[builtins.int], rate: builtins.float, name: builtins.str = '', rate_symbol: builtins.str = '', rate_symbol_latex: typing.Optional[builtins.str] = None, interaction: typing.Optional[InitialStateInteraction | BepInteraction] = None) -> Reaction: ...
-    def get_interaction(self) -> typing.Optional[InitialStateInteraction | BepInteraction]:
+    def __new__(cls, pattern_in: typing.Sequence[builtins.int], pattern_out: typing.Sequence[builtins.int], rate: builtins.float, name: builtins.str = '', rate_symbol: builtins.str = '', rate_symbol_latex: typing.Optional[builtins.str] = None, interaction: typing.Optional[FrozenTransitionStateBarrier | BepBarrierModel] = None) -> Reaction: ...
+    def get_interaction(self) -> typing.Optional[FrozenTransitionStateBarrier | BepBarrierModel]:
         r"""
         Get the per-reaction interaction model (None if not set: the builder's
         global model applies).
         """
-    def set_interaction(self, interaction: typing.Optional[InitialStateInteraction | BepInteraction]) -> None:
+    def set_interaction(self, interaction: typing.Optional[FrozenTransitionStateBarrier | BepBarrierModel]) -> None:
         r"""
         Set a per-reaction interaction model.
         """
     def with_rate(self, rate: builtins.float) -> Reaction: ...
     def with_rate_symbol(self, rate_symbol: builtins.str) -> Reaction: ...
-    def with_interaction(self, interaction: typing.Optional[InitialStateInteraction | BepInteraction]) -> Reaction: ...
+    def with_interaction(self, interaction: typing.Optional[FrozenTransitionStateBarrier | BepBarrierModel]) -> Reaction: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final

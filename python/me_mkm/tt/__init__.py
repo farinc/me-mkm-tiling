@@ -61,6 +61,11 @@ from me_mkm.tt.solve import (
     steady_state_residual,
     sweep_steady_state_tt,
 )
+from me_mkm.tt.spectral import (
+    left_slow_eigenpairs_tt,
+    slow_eigenpair_residual,
+    slow_eigenpairs_tt,
+)
 
 __all__ = [
     # convert
@@ -93,4 +98,8 @@ __all__ = [
     "committor_tt_residual",
     "threshold_projector_tt",
     "committor_class_profile_tt",
+    # spectral
+    "slow_eigenpairs_tt",
+    "left_slow_eigenpairs_tt",
+    "slow_eigenpair_residual",
 ]

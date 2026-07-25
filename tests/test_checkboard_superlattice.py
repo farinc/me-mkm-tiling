@@ -5,10 +5,10 @@ Steady-state reproduction of Adams et al. 2025, Figure 3. Scheme 1
 krxn = 1.0*kdes), swept over the adsorption equilibrium constant K[A] =
 kads/kdes. In our sign convention (rate_correction = exp(-eps*n_occ_neighbors),
 see test_dynamic.py), their repulsive eps_AA = 3.0 kBT is EPS = -3.0. The
-dimerization reaction is given its own noninteracting InitialStateInteraction
+dimerization reaction is given its own noninteracting FrozenTransitionStateBarrier
 (matching the original AdamsGePeters-1DTile Square_Dimer_1Ad_Reactions: the
 krxn step is unmodified by lambda, only desorption is), so the builder's
-shared repulsive InitialStateInteraction only touches adsorption/desorption.
+shared repulsive FrozenTransitionStateBarrier only touches adsorption/desorption.
 """
 
 from functools import lru_cache
@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from kmc import run_kmc_dimer_steady_state
 from me_mkm import (
-    InitialStateInteraction,
+    FrozenTransitionStateBarrier,
     MEMKMBuilder,
     Reaction,
     TileSettings,
@@ -44,12 +44,12 @@ FISH_SCALE = TileSettings.square(sites=8, d=3)
 # K_5, cannot host a checkerboard
 GREEK_CROSS = TileSettings.square(sites=5, d=2)
 
-_NONINTERACTING_PAIR = InitialStateInteraction.noninteracting(2, 1.0)
+_NONINTERACTING_PAIR = FrozenTransitionStateBarrier.noninteracting(2, 1.0)
 
 
 def build_system(K, tile_settings):
     """Scheme 1 (ads/des, repulsive) + Scheme 2 (dimerization, uncorrected)."""
-    interaction = InitialStateInteraction([[0.0, 0.0], [0.0, EPS]])
+    interaction = FrozenTransitionStateBarrier([[0.0, 0.0], [0.0, EPS]])
     reactions = [
         Reaction([0], [1], rate=K * K_DES, name="ads"),
         Reaction([1], [0], rate=K_DES, name="des"),

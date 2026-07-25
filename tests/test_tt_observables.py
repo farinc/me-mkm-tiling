@@ -9,8 +9,8 @@ import pytest
 import scipy.sparse as sp
 
 from me_mkm import (
-    BepInteraction,
-    InitialStateInteraction,
+    BepBarrierModel,
+    FrozenTransitionStateBarrier,
     MEMKMBuilder,
     Reaction,
     TileSettings,
@@ -35,7 +35,7 @@ FISH = TileSettings.square(sites=8, d=3)
 
 def langmuir(tile, eps=0.0, k_ads=1.3, k_des=0.7, omega=None):
     m = [[0.0, 0.0], [0.0, eps]]
-    im = InitialStateInteraction(m) if omega is None else BepInteraction(m, omega)
+    im = FrozenTransitionStateBarrier(m) if omega is None else BepBarrierModel(m, omega)
     reactions = [
         Reaction([0], [1], rate=k_ads, name="ads"),
         Reaction([1], [0], rate=k_des, name="des"),
@@ -46,7 +46,7 @@ def langmuir(tile, eps=0.0, k_ads=1.3, k_des=0.7, omega=None):
 def interacting_dimer(tile, eps, omega=None):
     """ads/des + dimerization under one interaction model (interacting pair)."""
     m = [[0.0, 0.0], [0.0, eps]]
-    im = InitialStateInteraction(m) if omega is None else BepInteraction(m, omega)
+    im = FrozenTransitionStateBarrier(m) if omega is None else BepBarrierModel(m, omega)
     reactions = [
         Reaction([0], [1], rate=100.0, name="ads"),
         Reaction([1], [0], rate=1.0, name="des"),

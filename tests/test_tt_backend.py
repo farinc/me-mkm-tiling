@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 
 from me_mkm import (
-    BepInteraction,
-    InitialStateInteraction,
+    BepBarrierModel,
+    FrozenTransitionStateBarrier,
     MEMKMBuilder,
     Reaction,
     TileSettings,
@@ -38,7 +38,7 @@ HEX = TileSettings.hex(2)  # creamcups K_7, 128 states
 
 def langmuir(tile, eps=0.0, omega=None):
     """Single-adsorbate Langmuir builder. eps sets the A-A interaction; omega
-    (None -> InitialStateInteraction, float -> BepInteraction) picks the
+    (None -> FrozenTransitionStateBarrier, float -> BepBarrierModel) picks the
     scheme, so BEP's final-state / omega-weighted correction gets exercised."""
     im = _interaction(eps, omega)
     reactions = [
@@ -50,7 +50,7 @@ def langmuir(tile, eps=0.0, omega=None):
 
 def _interaction(eps, omega):
     m = [[0.0, 0.0], [0.0, eps]]
-    return InitialStateInteraction(m) if omega is None else BepInteraction(m, omega)
+    return FrozenTransitionStateBarrier(m) if omega is None else BepBarrierModel(m, omega)
 
 
 def interacting_dimer(tile, eps, omega=None):

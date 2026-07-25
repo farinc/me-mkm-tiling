@@ -1,6 +1,6 @@
 from me_mkm._me_mkm import (
-    BepInteraction,
-    InitialStateInteraction,
+    BepBarrierModel,
+    FrozenTransitionStateBarrier,
     MEMKMBuilder,
     Reaction,
     TileSettings,
