@@ -13,7 +13,12 @@ import math
 
 import numpy as np
 
-from me_mkm._me_mkm import MEMKMBuilder, decode_state, state_counts  # noqa: F401
+from me_mkm._me_mkm import (  # noqa: F401
+    MEMKMBuilder,
+    decode_state,
+    encode_state,
+    state_counts,
+)
 
 
 def microstate_as_coverage(builder: MEMKMBuilder, idx: int) -> np.ndarray:

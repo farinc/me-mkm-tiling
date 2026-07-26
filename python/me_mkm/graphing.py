@@ -2,7 +2,12 @@
 Exports ME-MKM coverage-class transition graphs to JSON for memkm_viewer.html
 """
 
-from me_mkm.microstates import coverage_classes, pattern_delta_counts
+from me_mkm.microstates import (
+    coverage_classes,
+    decode_state,
+    encode_state,
+    pattern_delta_counts,
+)
 from me_mkm.observables import class_average_matches
 
 import json
@@ -213,8 +218,21 @@ def make_equation(pattern_in, pattern_out, all_species, rate_fwd=None, rate_bwd=
     return f"{lhs} {arrow} {rhs}"
 
 
+_SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+
+
+def _subscript(n: int) -> str:
+    """Unicode subscript digits for an integer, e.g. 12 -> '₁₂'."""
+    return str(n).translate(_SUBSCRIPT_DIGITS)
+
+
 def build_graph(
-    builder, display_reactions=None, title=None, node_colors=None, Theta=None
+    builder,
+    display_reactions=None,
+    title=None,
+    node_colors=None,
+    Theta=None,
+    bubble_limit_l=None,
 ):
     """
     Build the coverage-class transition graph from an MEMKMBuilder.
@@ -234,11 +252,19 @@ def build_graph(
         multiplier becomes the Theta-conditional expected match count instead
         of the plain average over class members (see
         observables.class_average_matches).
+    bubble_limit_l : int, optional
+        If given and builder.l <= bubble_limit_l, every coverage-class node
+        gets its full microstate membership (decoded vector plus its
+        encode_state number), so the viewer can expand it into a bubble of
+        tiles while keeping the Theta(...) label. Above the limit, nodes
+        stay symbolic as usual.
     """
     l = builder.l
-    n_ads = builder.n_species - 1  # species 1..n_species-1 (index 0 is the reference)
+    base = builder.n_species
+    n_ads = base - 1  # species 1..n_species-1 (index 0 is the reference)
     topology = builder.tile_settings
     d = topology.d()
+    bubbles_active = bubble_limit_l is not None and l <= bubble_limit_l
 
     # species_names has the reference species at index 0; default to the
     # builder's own names.
@@ -388,20 +414,34 @@ def build_graph(
             f"n({adsorbate_names[i]})={c}" for i, c in enumerate(counts)
         )
         x, y = graph_pos(counts)
-        nodes.append(
-            {
-                "id": node_id(counts),
-                "counts": list(counts),
-                "counts_label": counts_label,
-                "x": x,
-                "y": y,
-                "canonical_state": rep,
-                "degeneracy": len(groups[counts]),
-                "is_absorbing": absorp,
-                "rxn_pairs": rxn_pairs,
-                "color": col,
-            }
-        )
+        node = {
+            "id": node_id(counts),
+            "counts": list(counts),
+            "counts_label": counts_label,
+            "x": x,
+            "y": y,
+            "canonical_state": rep,
+            "degeneracy": len(groups[counts]),
+            "is_absorbing": absorp,
+            "rxn_pairs": rxn_pairs,
+            "color": col,
+        }
+        if bubbles_active:
+            node["microstates"] = []
+            for member_idx in sorted(int(i) for i in groups[counts]):
+                vector = list(decode_state(member_idx, l, base))
+                # Recomputed via encode_state (not just reused from the
+                # enumeration above) so the exported number is provably the
+                # base-`base` encoding of `vector`, not an arbitrary index.
+                idx = encode_state(vector, base)
+                node["microstates"].append(
+                    {
+                        "idx": idx,
+                        "vector": vector,
+                        "label": f"{idx}{_subscript(base)}",
+                    }
+                )
+        nodes.append(node)
 
     ei = 0
     for counts in STATES:
@@ -444,6 +484,8 @@ def build_graph(
             "all_species": all_species,
             "icon_rows": icon_rows,
             "icon_max_col": icon_max_col,
+            "bubble_limit_l": bubble_limit_l,
+            "bubbles_active": bubbles_active,
         },
         "site_positions": {str(i): rc for i, rc in icon_pos.items()},
         "display_reactions": display_rxns,

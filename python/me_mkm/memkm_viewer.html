@@ -59,6 +59,9 @@ body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;height:10
 #export-status{font-size:10px;color:#64748b;line-height:1.45;margin-top:7px;min-height:1.45em}
 .help{font-size:10px;color:#64748b;line-height:1.45;margin-top:6px}
 .ctrl-row input[type=range]{border:none;padding:2px 0;accent-color:#475569;width:100%;cursor:pointer}
+.ctrl-row input[type=checkbox]{width:14px;height:14px;flex:none;padding:0;margin:0;border:none;background:none;accent-color:#475569;cursor:pointer}
+.ctrl-row-check{flex-direction:row;align-items:center;gap:7px}
+.ctrl-row-check label{font-size:12px;font-weight:400;color:#334155}
 .ctrl-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .ctrl-grid .ctrl-row{margin:0}
 .editor-title{font-size:12px;font-weight:600;color:#1e293b;line-height:1.5;margin-bottom:4px}
@@ -134,6 +137,19 @@ body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b;height:10
       <div id="graph-layout-help" class="help">
         Canonical symmetric layout: 1 adsorbate → line, 2 adsorbates → equilateral triangle, 3 adsorbates → square, and higher counts → regular polygon.
       </div>
+    </div>
+
+    <div class="panel">
+      <h3>Microstate bubbles</h3>
+      <div class="ctrl-row">
+        <label for="bubble-limit-l">Max tile size (l) to expand</label>
+        <input id="bubble-limit-l" type="number" min="1" max="10000" step="1" value="6">
+      </div>
+      <div class="ctrl-row ctrl-row-check">
+        <input id="bubble-toggle" type="checkbox" disabled>
+        <label for="bubble-toggle">Expand classes into microstate tiles</label>
+      </div>
+      <div id="bubble-info" class="help">Load a graph to enable.</div>
     </div>
 
     <div class="panel">
@@ -343,6 +359,20 @@ let cySpread = 1.0;
 let edgeDefaults = {};
 let selectedEdgeId = null;
 let edgeEditingInstance = null;
+
+// Bubble-mode grid geometry: gap between adjacent microstate tiles, and the
+// padding between the outermost tiles and the bubble's dashed border.
+const BUBBLE_GAP = 24;
+const BUBBLE_PAD = 16;
+
+// Minimum edge-to-edge clearance the graph layout keeps between any two
+// coverage-class nodes, regardless of how big their footprints are.
+const MIN_EDGE_GAP = 120;
+
+// User-adjustable ceiling on tile size l for microstate-bubble expansion.
+// Guards against rendering base**l tiles and freezing the tab. Kept in
+// sync with #bubble-limit-l.
+let bubbleLimitL = 6;
 
 // Self-loop placement controls.  Angles are Cytoscape loop directions in
 // degrees: -90 = above, 0 = right, 90 = below, 180 = left.
@@ -673,6 +703,88 @@ function makeTileSVG(state, layout, allSpecies) {
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
+// Column/row count for arranging `count` microstate tiles in a roughly
+// square grid inside a bubble. Shared by bubbleChildOffsets (tile placement)
+// and bubbleFootprint (overall bubble size, for layout spacing).
+function bubbleGridDims(count) {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(count)));
+  return { cols, rows: Math.ceil(count / cols) };
+}
+
+// Grid offsets (centered on the origin) for laying out `count` microstate
+// tiles of size w×h inside a bubble, gap px apart.
+function bubbleChildOffsets(count, w, h, gap) {
+  const { cols, rows } = bubbleGridDims(count);
+  const stepX = w + gap, stepY = h + gap;
+  const originX = -((cols - 1) * stepX) / 2;
+  const originY = -((rows - 1) * stepY) / 2;
+  const offsets = [];
+  for (let i = 0; i < count; i++) {
+    offsets.push({ x: originX + (i % cols) * stepX, y: originY + Math.floor(i / cols) * stepY });
+  }
+  return offsets;
+}
+
+// Overall bubble footprint (matching the :parent style's padding), used so
+// the graph-layout spacing can keep bubbles from overlapping their
+// neighbors instead of assuming every node is a single-tile square.
+function bubbleFootprint(count, w, h, gap, padding) {
+  const { cols, rows } = bubbleGridDims(count);
+  return {
+    w: cols * w + (cols - 1) * gap + 2 * padding,
+    h: rows * h + (rows - 1) * gap + 2 * padding,
+  };
+}
+
+// A node's on-screen footprint for layout-spacing purposes: its bubble's
+// grid bounding box when expanded, otherwise the plain single-tile size.
+function nodeFootprint(n, bubbleMode, nodeW, nodeH) {
+  if (bubbleMode && n.microstates && n.microstates.length) {
+    return bubbleFootprint(n.microstates.length, nodeW, nodeH, BUBBLE_GAP, BUBBLE_PAD);
+  }
+  return { w: nodeW, h: nodeH };
+}
+
+// Decode a microstate index into its site vector. Mirrors the Rust/Python
+// decode_state convention exactly: idx = sum(site[i] * base**(l-1-i)), so
+// site[l-1] is the least-significant base-`base` digit of idx.
+function decodeStateJS(idx, l, base) {
+  const v = new Array(l).fill(0);
+  for (let i = l - 1; i >= 0; i--) {
+    v[i] = idx % base;
+    idx = Math.floor(idx / base);
+  }
+  return v;
+}
+
+const _SUBSCRIPT_DIGITS = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉' };
+function subscriptDigits(n) {
+  return String(n).split('').map(c => _SUBSCRIPT_DIGITS[c] ?? c).join('');
+}
+
+// Enumerates all base**l microstates and groups them by coverage class,
+// mirroring graphing.py's coverage_classes(). Runs client-side so bubbles
+// work regardless of the JSON's bubble_limit_l. Only call within the
+// confirmed limit, since cost scales as base**l.
+function computeMicrostateBubbles(graph) {
+  const m = graph.meta;
+  const l = m.l;
+  const base = (m.all_species && m.all_species.length) || (m.n_ads ?? 0) + 1;
+  const totalStates = Math.pow(base, l);
+  const byKey = new Map();
+  for (let idx = 0; idx < totalStates; idx++) {
+    const vector = decodeStateJS(idx, l, base);
+    const counts = new Array(base - 1).fill(0);
+    for (const site of vector) if (site > 0) counts[site - 1]++;
+    const key = counts.join(',');
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push({ idx, vector, label: idx + subscriptDigits(base) });
+  }
+  graph.nodes.forEach(n => {
+    n.microstates = byKey.get((n.counts || []).join(',')) || [];
+  });
+}
+
 // ── KaTeX helpers ──────────────────────────────────────────────────────────────
 function katexHtml(tex, display = false) {
   try { return katex.renderToString(tex, { throwOnError: false, displayMode: display }); }
@@ -757,13 +869,17 @@ function regularPolygonVertices(m) {
   return verts;
 }
 
-function coverageLayoutPositions(nodes, meta, nodeW, nodeH) {
+function coverageLayoutPositions(nodes, meta, nodeW, nodeH, sizeForNode) {
+  const sizeFn = sizeForNode || (() => ({ w: nodeW, h: nodeH }));
   const l = clampInt(meta?.l, 1, 50000, Math.max(1, Math.round(nodes[0]?.canonical_state?.length || 1)));
   const speciesCount = Math.max(1, nodes[0]?.counts?.length || 1);
   const componentCount = speciesCount + 1; // include vacancies
   const verts = regularPolygonVertices(componentCount);
 
-  const desiredGap = Math.max(nodeW, nodeH) + 34;
+  // This nominal gap only sets the composition-based ordering and scale.
+  // resolveOverlaps enforces actual clearance afterward using each node's
+  // real footprint.
+  const desiredGap = Math.max(nodeW, nodeH) + MIN_EDGE_GAP;
   const minChord = componentCount === 2 ? 2 : 2 * Math.sin(Math.PI / componentCount);
   // Use normalized coverages and a bounded radius. This prevents huge or NaN
   // coordinates from making Cytoscape's preset layout disappear.
@@ -813,7 +929,10 @@ function coverageLayoutPositions(nodes, meta, nodeW, nodeH) {
     }
     const cols = Math.ceil(Math.sqrt(group.length));
     const rows = Math.ceil(group.length / cols);
-    const collisionGap = Math.max(nodeW, nodeH) + 12;
+    const collisionGap = Math.max(...group.map(node => {
+      const s = sizeFn(node);
+      return Math.max(s.w, s.h);
+    })) + 12;
     group.forEach((node, idx) => {
       const c = idx % cols;
       const r = Math.floor(idx / cols);
@@ -823,7 +942,42 @@ function coverageLayoutPositions(nodes, meta, nodeW, nodeH) {
     });
   });
 
+  resolveOverlaps(nodes, finalPos, sizeFn, MIN_EDGE_GAP);
+
   return { positions: finalPos, scalePositions: raw, speciesCount, componentCount };
+}
+
+// Nudges apart any two nodes whose axis-aligned footprints (per sizeFn)
+// would overlap. Each bubble gets only as much room as its own size and
+// its neighbors' sizes demand, not the biggest bubble on the graph. The
+// composition-based layout above only encodes ordering. This pass is what
+// guarantees minGap of clearance.
+function resolveOverlaps(nodes, posMap, sizeFn, minGap, iterations = 80) {
+  for (let iter = 0; iter < iterations; iter++) {
+    let moved = false;
+    for (let i = 0; i < nodes.length; i++) {
+      const pa = posMap[nodes[i].id];
+      const sa = sizeFn(nodes[i]);
+      for (let j = i + 1; j < nodes.length; j++) {
+        const pb = posMap[nodes[j].id];
+        const sb = sizeFn(nodes[j]);
+        const dx = pb.x - pa.x, dy = pb.y - pa.y;
+        const overlapX = (sa.w / 2 + sb.w / 2 + minGap) - Math.abs(dx);
+        const overlapY = (sa.h / 2 + sb.h / 2 + minGap) - Math.abs(dy);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        moved = true;
+        // Separate along whichever axis needs the smaller push.
+        if (overlapX < overlapY) {
+          const push = (overlapX / 2) * (dx >= 0 ? 1 : -1);
+          pa.x -= push; pb.x += push;
+        } else {
+          const push = (overlapY / 2) * (dy >= 0 ? 1 : -1);
+          pa.y -= push; pb.y += push;
+        }
+      }
+    }
+    if (!moved) break;
+  }
 }
 
 function exportedLayoutPositions(nodes) {
@@ -832,9 +986,9 @@ function exportedLayoutPositions(nodes) {
   return { positions: out, scalePositions: out };
 }
 
-function buildGraphLayoutPositions(mode, nodes, meta, nodeW, nodeH) {
+function buildGraphLayoutPositions(mode, nodes, meta, nodeW, nodeH, sizeForNode) {
   if (mode === 'exported') return exportedLayoutPositions(nodes, meta);
-  return coverageLayoutPositions(nodes, meta, nodeW, nodeH);
+  return coverageLayoutPositions(nodes, meta, nodeW, nodeH, sizeForNode);
 }
 
 function updateGraphLayoutHelp() {
@@ -844,7 +998,14 @@ function updateGraphLayoutHelp() {
   if (sel.value === 'exported') {
     help.textContent = 'Use the x/y coordinates that came from the exported JSON.';
   } else {
-    help.textContent = 'Canonical symmetric layout: 1 adsorbate → line, 2 adsorbates → equilateral triangle, 3 adsorbates → square, and higher counts → regular polygon. Coverage classes that would otherwise coincide are spread slightly to keep them visible.';
+    help.innerHTML = 'Canonical symmetric layout:<br>$m = 1$ &rarr; line,<br>$m = 2$ &rarr; equilateral triangle,<br>$m = 3$ &rarr; square,<br>$m \\ge 4$ &rarr; regular polygon.';
+    if (typeof renderMathInElement !== 'undefined') {
+      renderMathInElement(help, {
+        delimiters: [{ left: '$$', right: '$$', display: true },
+                     { left: '$',  right: '$',  display: false }],
+        throwOnError: false,
+      });
+    }
   }
 }
 
@@ -1014,6 +1175,20 @@ function load(data) {
   const graphLayoutSel = document.getElementById('graph-layout-select');
   if (graphLayoutSel) graphLayoutSel.disabled = false;
   updateGraphLayoutHelp();
+
+  const bubbleAvailable = Number.isFinite(m.l) && m.l <= bubbleLimitL;
+  const bubbleToggle = document.getElementById('bubble-toggle');
+  const bubbleInfo = document.getElementById('bubble-info');
+  if (bubbleToggle) {
+    bubbleToggle.disabled = !bubbleAvailable;
+    if (bubbleAvailable && !bubbleToggle.dataset.userTouched) bubbleToggle.checked = true;
+    if (!bubbleAvailable) bubbleToggle.checked = false;
+  }
+  if (bubbleInfo) {
+    bubbleInfo.textContent = bubbleAvailable
+      ? `Each class can show all ${m.n_states} microstate tiles (l=${m.l} ≤ limit ${bubbleLimitL}).`
+      : `Skipped: l=${m.l} exceeds the current limit (${bubbleLimitL}), so classes stay symbolic. Raise the limit above to expand.`;
+  }
   setExportEnabled(true);
   const currentShape = shapeSel?.value || 'brick-strip';
   updateShapeInfo(currentShape);
@@ -1021,10 +1196,13 @@ function load(data) {
   // ── Build Cytoscape elements ───────────────────────────────────────────────
   const tileLayout = buildTileLayout(currentShape, G.site_positions, m);
   const nodeW = tileLayout.W, nodeH = tileLayout.H;
+  const bubbleMode = bubbleAvailable && !!bubbleToggle?.checked;
+  if (bubbleMode) computeMicrostateBubbles(G);
+  const sizeForNode = n => nodeFootprint(n, bubbleMode, nodeW, nodeH);
 
   // Canonical coverage coordinates are already scaled in graph pixels.
   // Exported coordinates retain the older overlap-protection scaling.
-  const graphLayout = buildGraphLayoutPositions(graphLayoutMode, G.nodes, m, nodeW, nodeH);
+  const graphLayout = buildGraphLayoutPositions(graphLayoutMode, G.nodes, m, nodeW, nodeH, sizeForNode);
   let ps = 1.0;
   if (graphLayoutMode === 'exported') {
     const scaleVals = Object.values(graphLayout.scalePositions);
@@ -1042,15 +1220,48 @@ function load(data) {
   G.nodes.forEach(n => {
     const p = graphLayout.positions[n.id] || { x: n.x, y: n.y };
     basePositions[n.id] = { x: p.x * ps, y: p.y * ps };
-    elements.push({
-      data: {
-        id: n.id,
-        svgUrl: makeTileSVG(n.canonical_state, tileLayout, allSp),
-        borderColor: '#1e293b',
-        label: 'Θ(' + n.counts.join(',') + ')',
-      },
-      position: { x: p.x * ps * cySpread, y: p.y * ps * cySpread },
-    });
+    const cx = p.x * ps * cySpread, cy_ = p.y * ps * cySpread;
+    const label = 'Θ(' + n.counts.join(',') + ')';
+
+    if (bubbleMode && n.microstates && n.microstates.length) {
+      // Bubble: one compound parent (kept as the class's Theta(...) label
+      // and the source/target every edge still connects to) plus one leaf
+      // child per microstate, laid out in a grid centered on the class's
+      // usual graph-layout slot. The parent gets no explicit position/size
+      // so Cytoscape auto-fits it to the children's bounding box.
+      elements.push({
+        data: { id: n.id, borderColor: '#1e293b', label },
+        classes: 'bubble-parent',
+      });
+      const offsets = bubbleChildOffsets(n.microstates.length, nodeW, nodeH, BUBBLE_GAP);
+      n.microstates.forEach((ms, i) => {
+        elements.push({
+          data: {
+            id: n.id + '__m' + ms.idx,
+            parent: n.id,
+            svgUrl: makeTileSVG(ms.vector, tileLayout, allSp),
+            borderColor: n.color || '#1e293b',
+            label: ms.label,
+            msIdx: ms.idx,
+            msVector: ms.vector,
+            msLabel: ms.label,
+            msClassId: n.id,
+          },
+          classes: 'bubble-child',
+          position: { x: cx + offsets[i].x, y: cy_ + offsets[i].y },
+        });
+      });
+    } else {
+      elements.push({
+        data: {
+          id: n.id,
+          svgUrl: makeTileSVG(n.canonical_state, tileLayout, allSp),
+          borderColor: '#1e293b',
+          label,
+        },
+        position: { x: cx, y: cy_ },
+      });
+    }
   });
 
   // Give self-transitions explicit loop geometry.  Cytoscape otherwise places
@@ -1165,21 +1376,56 @@ function load(data) {
         selector: 'node',
         style: {
           'shape':            'roundrectangle',
-          'background-image': 'data(svgUrl)',
-          'background-fit':   'contain',
-          'background-color': '#ffffff',
           'border-width':     1.5,
           'border-color':     'data(borderColor)',
-          'width':            nodeW,
-          'height':           nodeH,
           'label':            'data(label)',
-          'text-valign':      'bottom',
           'text-halign':      'center',
-          'text-margin-y':    5,
           'font-size':        cyFontSize,
           'color':            '#475569',
           'font-family':      'system-ui, sans-serif',
           'min-zoomed-font-size': 6,
+        },
+      },
+      {
+        // Leaf tile nodes: the symbolic single-tile node in normal mode, and
+        // each microstate tile inside a bubble. Width/height are fixed
+        // pixel sizes. Compound bubble parents (below) must not match this
+        // selector, or fixing their size would defeat Cytoscape's automatic
+        // compound sizing from child bounding box.
+        selector: 'node:childless',
+        style: {
+          'background-image': 'data(svgUrl)',
+          'background-fit':   'contain',
+          'background-color': '#ffffff',
+          'width':            nodeW,
+          'height':           nodeH,
+          'text-valign':      'bottom',
+          'text-margin-y':    5,
+        },
+      },
+      {
+        // Microstate tiles inside a bubble get a smaller caption (base-n
+        // numeral) than a symbolic node's Theta(...) label.
+        selector: 'node.bubble-child',
+        style: {
+          'font-size':     Math.max(6, cyFontSize - 3),
+          'text-margin-y': 3,
+        },
+      },
+      {
+        // Bubble container: a coverage-class node expanded into its full
+        // microstate membership. Left unsized so Cytoscape auto-fits it to
+        // the bounding box of its bubble-child tiles.
+        selector: 'node:parent',
+        style: {
+          'background-color':   '#eef2ff',
+          'background-opacity': 0.55,
+          'border-style':       'dashed',
+          'padding':            BUBBLE_PAD,
+          'text-valign':        'top',
+          'text-margin-y':      -8,
+          'font-weight':        'bold',
+          'compound-sizing-wrt-labels': 'include',
         },
       },
       {
@@ -1258,7 +1504,12 @@ function load(data) {
 
 
   cy.on('tap', 'node', evt => {
-    const n = NM[evt.target.id()];
+    const t = evt.target;
+    if (t.hasClass('bubble-child')) {
+      showMicrostate(t.data());
+      return;
+    }
+    const n = NM[t.id()];
     if (n) showNode(n);
   });
 
@@ -1340,6 +1591,34 @@ function showNode(n) {
   }
 }
 
+// Sidebar for a single microstate tile inside a bubble.
+function showMicrostate(d) {
+  const nd = document.getElementById('nd');
+  const allSp = G.meta.all_species || ['*', ...(G.meta.species_names || [])];
+  const parent = NM[d.msClassId];
+
+  const vecHtml = (d.msVector || []).map((s, i) =>
+    `<span class="bdg" style="background:${SP_FILL[s] || '#888'};color:#fff">${i}:${escapeXml(String(allSp[s] ?? s))}</span>`
+  ).join(' ');
+
+  const base = (G.meta.n_ads ?? allSp.length - 1) + 1;
+  nd.innerHTML = `
+    <b>${katexHtml('\\Theta(' + (parent?.counts || []).join(',') + ')')}</b>
+    &ensp;<span class="muted">microstate</span><br>
+    <b>Encoded number</b> = ${katexHtml(d.msIdx + '_{' + base + '}')}
+    &ensp;<span class="muted">(encode_state of the vector below, base ${base})</span><br>
+    <b>Vector</b> (site &rarr; species):<br>${vecHtml}
+    <br><br><span class="muted">Click the bubble's own border/label, or an edge, for class-level reaction info.</span>
+  `;
+
+  if (typeof renderMathInElement !== 'undefined') {
+    renderMathInElement(nd, {
+      delimiters: [{ left: '$$', right: '$$', display: true },
+                   { left: '$',  right: '$',  display: false }],
+      throwOnError: false,
+    });
+  }
+}
 
 function edgeStyleDataFromElement(edgeEl) {
   const d = edgeEl.data();
@@ -1540,10 +1819,15 @@ function updateEdgeJsonPreview() {
 function applyGraphLayoutToCurrentCy(mode) {
   if (!G || !cy) return;
   try {
-    const firstNode = cy.nodes()[0];
+    // Compound bubble parents auto-size to their children, so their
+    // rendered width/height isn't a single tile's size. Read it from a
+    // childless (leaf tile) node instead, which is always fixed-size.
+    const firstNode = cy.nodes(':childless')[0];
     const nodeW = firstNode ? Number(firstNode.style('width').replace('px', '')) || 80 : 80;
     const nodeH = firstNode ? Number(firstNode.style('height').replace('px', '')) || 50 : 50;
-    const layout = buildGraphLayoutPositions(mode, G.nodes, G.meta, nodeW, nodeH);
+    const bubbleModeNow = !!document.getElementById('bubble-toggle')?.checked;
+    const sizeForNode = n => nodeFootprint(n, bubbleModeNow, nodeW, nodeH);
+    const layout = buildGraphLayoutPositions(mode, G.nodes, G.meta, nodeW, nodeH, sizeForNode);
 
     let ps = 1.0;
     if (mode === 'exported') {
@@ -1557,7 +1841,11 @@ function applyGraphLayoutToCurrentCy(mode) {
 
     basePositions = {};
     cy.batch(() => {
-      cy.nodes().forEach(node => {
+      // Bubble-child tiles aren't in G.nodes (only their class parent is),
+      // so they have no entry in layout.positions. Moving their parent
+      // already translates them, since Cytoscape moves a compound's
+      // descendants along with it.
+      cy.nodes().filter(node => !node.isChild()).forEach(node => {
         const p = layout.positions[node.id()];
         if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) {
           throw new Error(`Invalid position for node ${node.id()}`);
@@ -1612,6 +1900,69 @@ if (graphLayoutSelect) {
 const repeatCount = document.getElementById('repeat-count');
 if (repeatCount) {
   repeatCount.addEventListener('change', () => { if (G) load(G); });
+}
+
+const bubbleToggleEl = document.getElementById('bubble-toggle');
+if (bubbleToggleEl) {
+  bubbleToggleEl.addEventListener('change', () => {
+    bubbleToggleEl.dataset.userTouched = '1';
+    if (G) load(G);
+  });
+}
+
+// log10(n!) via direct summation. Avoids overflowing Number for the large
+// l this dialog warns about.
+function log10Factorial(n) {
+  let s = 0;
+  for (let i = 2; i <= n; i++) s += Math.log10(i);
+  return s;
+}
+
+// log10 of the largest coverage class (multinomial coefficient) a tile of
+// length l with `base` species per site can produce. Maximized by
+// splitting l as evenly as possible across the base species.
+function maxCoverageClassLog10(l, base) {
+  const q = Math.floor(l / base), r = l % base;
+  return log10Factorial(l) - r * log10Factorial(q + 1) - (base - r) * log10Factorial(q);
+}
+
+function formatMagnitude(log10Value) {
+  if (log10Value <= 14) return Math.round(Math.pow(10, log10Value)).toLocaleString();
+  return `~10^${log10Value.toFixed(1)}`;
+}
+
+// Describes what the new limit would actually produce, not just that l
+// is going up.
+function bubbleLimitRiskMessage(newLimit) {
+  const knownBase = G && G.meta && ((G.meta.all_species && G.meta.all_species.length) || (Number.isFinite(G.meta.n_ads) ? G.meta.n_ads + 1 : null));
+  const base = knownBase || 2;
+  const basis = knownBase
+    ? `base=${base}, the loaded graph's species count`
+    : `base=${base}, the minimal case of one adsorbate plus vacancy. More species make this worse.`;
+  const maxMag = formatMagnitude(maxCoverageClassLog10(newLimit, base));
+  return `At l=${newLimit} with ${basis}, the largest coverage class would hold up to ${maxMag} tiles in one bubble.`;
+}
+
+const bubbleLimitInput = document.getElementById('bubble-limit-l');
+if (bubbleLimitInput) {
+  bubbleLimitL = clampInt(bubbleLimitInput.value, 1, 100000, bubbleLimitL);
+  bubbleLimitInput.addEventListener('change', () => {
+    const prev = bubbleLimitL;
+    const next = clampInt(bubbleLimitInput.value, 1, 100000, prev);
+    if (next > prev) {
+      const proceed = window.confirm(
+        `${bubbleLimitRiskMessage(next)}\n\nRendering that many tiles for one coverage class may freeze ` +
+        `or crash your browser (or even the machine).\n\nContinue?`
+      );
+      if (!proceed) {
+        bubbleLimitInput.value = prev;
+        return;
+      }
+    }
+    bubbleLimitL = next;
+    bubbleLimitInput.value = next;
+    if (G) load(G);
+  });
 }
 
 const exportSvgBtn = document.getElementById('export-svg-btn');
@@ -1711,6 +2062,8 @@ if (spreadSlider) {
 
 // Keep Cytoscape aware of container resizes.
 window.addEventListener('resize', () => { if (cy) cy.resize(); });
+
+// embedded data
 </script>
 </body>
 </html>
