@@ -26,6 +26,11 @@ except ImportError as exc:  # pragma: no cover - exercised only without the extr
         "pyproject.toml's [dependency-groups].)"
     ) from exc
 
+from me_mkm.tt.committor import (
+    committor_tt,
+    committor_tt_residual,
+    threshold_projector_tt,
+)
 from me_mkm.tt.convert import (
     mpo_to_dense,
     ones_tt,
@@ -36,11 +41,7 @@ from me_mkm.tt.convert import (
     tt_normalize_prob,
     tt_to_dense,
     unit_tt,
-)
-from me_mkm.tt.committor import (
-    committor_tt,
-    committor_tt_residual,
-    threshold_projector_tt,
+    vector_outer_product_tt,
 )
 from me_mkm.tt.observables import (
     committor_class_profile_tt,
@@ -63,43 +64,48 @@ from me_mkm.tt.solve import (
 )
 from me_mkm.tt.spectral import (
     left_slow_eigenpairs_tt,
+    left_slow_eigenpairs_tt_als,
     slow_eigenpair_residual,
     slow_eigenpairs_tt,
+    slow_eigenpairs_tt_als,
 )
 
 __all__ = [
-    # convert
-    "rank1_operator",
-    "rank1_vector",
-    "ones_tt",
-    "unit_tt",
-    "product_state_tt",
-    "tt_to_dense",
-    "mpo_to_dense",
-    "tt_inner",
-    "tt_normalize_prob",
+    # solve
+    "TTSolveInfo",
     # operator
     "build_W_tt",
     "build_W_tt_components",
     "build_dW_dbeta_tt",
-    # solve
-    "TTSolveInfo",
-    "solve_steady_state_tt",
-    "steady_state_residual",
-    "steady_state_derivative_tt",
-    "sweep_steady_state_tt",
-    # observables
-    "site_marginals",
-    "coverage_mean_tt",
-    "production_rate_tt",
-    "coverage_distribution_tt",
+    "committor_class_profile_tt",
     # committor
     "committor_tt",
     "committor_tt_residual",
-    "threshold_projector_tt",
-    "committor_class_profile_tt",
+    "coverage_distribution_tt",
+    "coverage_mean_tt",
+    "left_slow_eigenpairs_tt",
+    "left_slow_eigenpairs_tt_als",
+    "mpo_to_dense",
+    "ones_tt",
+    "product_state_tt",
+    "production_rate_tt",
+    # convert
+    "rank1_operator",
+    "rank1_vector",
+    # observables
+    "site_marginals",
+    "slow_eigenpair_residual",
     # spectral
     "slow_eigenpairs_tt",
-    "left_slow_eigenpairs_tt",
-    "slow_eigenpair_residual",
+    "slow_eigenpairs_tt_als",
+    "solve_steady_state_tt",
+    "steady_state_derivative_tt",
+    "steady_state_residual",
+    "sweep_steady_state_tt",
+    "threshold_projector_tt",
+    "tt_inner",
+    "tt_normalize_prob",
+    "tt_to_dense",
+    "unit_tt",
+    "vector_outer_product_tt",
 ]
