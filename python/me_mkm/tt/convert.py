@@ -71,6 +71,29 @@ def product_state_tt(builder: MEMKMBuilder, coverage) -> TT:
     return rank1_vector(l, n, {site: p for site in range(l)})
 
 
+def vector_outer_product_tt(u_tt: TT, v_tt: TT) -> TT:
+    """Diagonal-free rank-(rank(u)*rank(v)) MPO representing |u><v|:
+    (u (x) v) @ x = u * <v, x>. Used for exact (Wielandt/Hotelling)
+    eigenvalue deflation of non-normal operators, where the deflation term
+    for a known (right, left) eigenvector pair must use the true dual, not
+    the same vector twice (see tt_spectral_deflation_followup.md).
+
+    Site p's operator core combines u's core (r_u_left, n, 1, r_u_right) and
+    v's core (r_v_left, n, 1, r_v_right) into (r_u_left*r_v_left, n, n,
+    r_u_right*r_v_right), whose [(a1,a2), s, t, (b1,b2)] entry is
+    u_core[a1,s,b1] * v_core[a2,t,b2] -- the standard MPO-from-two-MPS
+    outer-product construction."""
+    cores = []
+    for u_core, v_core in zip(u_tt.cores, v_tt.cores):
+        ru_l, n, _, ru_r = u_core.shape
+        rv_l, _, _, rv_r = v_core.shape
+        u = u_core.reshape(ru_l, n, ru_r)
+        v = v_core.reshape(rv_l, n, rv_r)
+        block = np.einsum("asb,ctd->acstbd", u, v)
+        cores.append(block.reshape(ru_l * rv_l, n, n, ru_r * rv_r))
+    return TT(cores)
+
+
 def tt_to_dense(theta_tt: TT) -> np.ndarray:
     """Dense state vector of length n**l, index-aligned with encode_state
     (site 0 most significant). Only feasible for small l -- validation and
