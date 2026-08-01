@@ -965,6 +965,28 @@ impl MEMKMBuilder {
         (rows, cols, vals)
     }
 
+    /// Counts the number of nonzero entries in the W matrix.
+    pub fn count_w_nnz(&self) -> usize {
+        let n = self.tile.n_states;
+        let mut count = n; // diagonal entries
+        for from_idx in 0..n {
+            let state = decode(from_idx, self.tile.l, self.tile.base);
+            for rxn in &self.reactions {
+                self.step_edges(
+                    &state,
+                    from_idx,
+                    rxn,
+                    false,
+                    |_, _| 0.0,
+                    |_to_idx, _corr| {
+                        count += 1;
+                    },
+                );
+            }
+        }
+        count
+    }
+
     /// Same as `build_w_coo`, but restricted to rows in `[row_start, row_end)`
     /// Each row's off-diagonal entries are found by inverting every reaction's
     /// forward pattern (reconstructing the predecessor state from the row's own

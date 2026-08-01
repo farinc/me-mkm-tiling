@@ -174,6 +174,10 @@ class MEMKMBuilder:
         diag vector appended as the matrix diagonal, at each reaction's
         current rate.
         """
+    def count_w_nnz(self) -> builtins.int:
+        r"""
+        Counts the number of nonzero entries in the W matrix.
+        """
     def build_w_coo_range(self, row_start: builtins.int, row_end: builtins.int) -> tuple[builtins.list[builtins.int], builtins.list[builtins.int], builtins.list[builtins.float]]:
         r"""
         Same as `build_w_coo`, but restricted to rows in `[row_start, row_end)`
@@ -221,9 +225,6 @@ class Reaction:
                    Defaults to name if empty.
     rate_symbol_latex : Optional LaTeX string for the rate constant symbol (e.g. r"k_{\mathrm{ads}}")
     interaction  : optional per-reaction interaction model (any of the
-                   InteractionModel implementors, e.g. FrozenTransitionStateBarrier
-                   or BepBarrierModel); if None the builder's global model
-                   (default noninteracting) is used.
     """
     @property
     def pattern_in(self) -> builtins.list[builtins.int]: ...
