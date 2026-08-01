@@ -18,5 +18,9 @@
         "path": "C:\\Program Files\\Git\\bin\\bash.exe",
         "icon": "terminal-bash"
         }
-    }
+    },
+    "rust-analyzer.runnables.extraEnv": [
+        { "platform": "win32", "env": { "PYO3_PYTHON": "${workspaceFolder}/.venv/Scripts/python.exe" } },
+        { "platform": "linux",  "env": { "PYO3_PYTHON": "${workspaceFolder}/.venv/bin/python" } }
+    ]  
 }
